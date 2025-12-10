@@ -129,66 +129,39 @@ class _HomeScreenState extends State<HomeScreen> {
       showDialog(
           context: context,
           builder: (context) {
-              // Temp state for settings dialog
               int tempAtrPeriod = provider.atrPeriod;
               double tempAtrMult = provider.atrMultiplier;
               int tempEmaPeriod = provider.emaPeriod;
               
-              double tempFomo = provider.scoreFomo;
-              double tempSlightlyAbove = provider.scoreSlightlyAbove;
-              double tempOptimal = provider.scoreOptimal;
-              double tempFallingKnife = provider.scoreFallingKnife;
-              double tempVolumeSpike = provider.scoreVolumeSpike;
-              double tempSideways = provider.scoreSideways;
-
               return StatefulBuilder(
                   builder: (context, setState) {
                       return AlertDialog(
-                          title: const Text('Global Settings'),
-                          content: SingleChildScrollView(
-                              child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                      const Text('Strategy Params', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
-                                      const Divider(),
-                                      const Text('ATR Strategy', style: TextStyle(fontWeight: FontWeight.bold)),
-                                      Row(
-                                          children: [
-                                              Expanded(child: TextField(
-                                                  decoration: const InputDecoration(labelText: 'Period'),
-                                                  keyboardType: TextInputType.number,
-                                                  controller: TextEditingController(text: tempAtrPeriod.toString()),
-                                                  onChanged: (v) => tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
-                                              )),
-                                              const SizedBox(width: 8),
-                                              Expanded(child: TextField(
-                                                  decoration: const InputDecoration(labelText: 'Multiplier'),
-                                                  keyboardType: TextInputType.number,
-                                                  controller: TextEditingController(text: tempAtrMult.toString()),
-                                                  onChanged: (v) => tempAtrMult = double.tryParse(v) ?? tempAtrMult,
-                                              )),
-                                          ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      const Text('EMA Strategy', style: TextStyle(fontWeight: FontWeight.bold)),
-                                      TextField(
-                                          decoration: const InputDecoration(labelText: 'Period'),
-                                          keyboardType: TextInputType.number,
-                                          controller: TextEditingController(text: tempEmaPeriod.toString()),
-                                          onChanged: (v) => tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
-                                      ),
-                                      const SizedBox(height: 20),
-                                      const Text('Risk Analysis Scores', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
-                                      const Divider(),
-                                      _buildScoreInput('Price >> EMA (FOMO)', tempFomo, (v) => tempFomo = v),
-                                      _buildScoreInput('Price > EMA', tempSlightlyAbove, (v) => tempSlightlyAbove = v),
-                                      _buildScoreInput('Price ~ EMA (Optimal)', tempOptimal, (v) => tempOptimal = v),
-                                      _buildScoreInput('Price < EMA (Falling Knife)', tempFallingKnife, (v) => tempFallingKnife = v),
-                                      _buildScoreInput('Volume Spike', tempVolumeSpike, (v) => tempVolumeSpike = v),
-                                      _buildScoreInput('Sideways Trend', tempSideways, (v) => tempSideways = v),
-                                  ],
-                              ),
+                          title: const Text('Global Strategy Settings'),
+                          content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                  const Text('ATR Strategy', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  TextField(
+                                      decoration: const InputDecoration(labelText: 'Period'),
+                                      keyboardType: TextInputType.number,
+                                      controller: TextEditingController(text: tempAtrPeriod.toString()),
+                                      onChanged: (v) => tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
+                                  ),
+                                  TextField(
+                                      decoration: const InputDecoration(labelText: 'Multiplier'),
+                                      keyboardType: TextInputType.number,
+                                      controller: TextEditingController(text: tempAtrMult.toString()),
+                                      onChanged: (v) => tempAtrMult = double.tryParse(v) ?? tempAtrMult,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  const Text('EMA Strategy', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  TextField(
+                                      decoration: const InputDecoration(labelText: 'Period'),
+                                      keyboardType: TextInputType.number,
+                                      controller: TextEditingController(text: tempEmaPeriod.toString()),
+                                      onChanged: (v) => tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
+                                  ),
+                              ],
                           ),
                           actions: [
                               TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
@@ -196,14 +169,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   onPressed: () {
                                       provider.updateGlobalAtrParams(period: tempAtrPeriod, multiplier: tempAtrMult);
                                       provider.updateGlobalEmaParams(period: tempEmaPeriod);
-                                      provider.updateTrendParams(
-                                          fomo: tempFomo,
-                                          slightlyAbove: tempSlightlyAbove,
-                                          optimal: tempOptimal,
-                                          fallingKnife: tempFallingKnife,
-                                          volumeSpike: tempVolumeSpike,
-                                          sideways: tempSideways,
-                                      );
                                       Navigator.pop(context);
                                   }, 
                                   child: const Text('Save')
@@ -213,29 +178,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
               );
           }
-      );
-  }
-
-  Widget _buildScoreInput(String label, double value, Function(double) onChanged) {
-      return Row(
-          children: [
-              Expanded(flex: 3, child: Text(label, style: const TextStyle(fontSize: 12))),
-              Expanded(
-                  flex: 2,
-                  child: SizedBox(
-                      height: 35,
-                      child: TextField(
-                          decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 8)),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                          controller: TextEditingController(text: value.toString()),
-                          onChanged: (v) {
-                              final d = double.tryParse(v);
-                              if (d != null) onChanged(d);
-                          },
-                      ),
-                  ),
-              ),
-          ],
       );
   }
 }
@@ -388,94 +330,49 @@ class _SessionViewState extends State<_SessionView> {
     
     final date = DateTime.fromMillisecondsSinceEpoch(lastCandle.date * 1000);
     final dateStr = DateFormat('yyyy-MM-dd').format(date);
+    final entryPrice = session.entryPrice;
+    double percentage(double price) {
+      var usePrice = entryPrice == null && session.stockQuote != null && session.stockQuote!.candles.isNotEmpty ? session.stockQuote!.candles.last.close : (entryPrice ?? 0.0);
+      return (price - usePrice) / usePrice * 100;
+    }
+    final trailingProfit = trailing != null ? percentage(trailing) : 0.0;
+    final cutLossProfit = cutLoss != null ? percentage(cutLoss) : 0.0;
     
-    final trendAnalysis = session.trendAnalysis;
-
     return Card(
       color: Colors.blue.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            Row(children: [
              Text('Date: $dateStr', style: const TextStyle(fontStyle: FontStyle.italic)),
              Text('Current Price: ${lastClose.toStringAsFixed(2)}', style: const TextStyle(fontSize: 18)),
+            ]),
              const Divider(),
              Row(
                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                  children: [
-                     Column(
+                     Wrap(
                          children: [
                              const Text('Cut Loss', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                             Text(cutLoss.toStringAsFixed(2), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+                             Tooltip(
+                                 message: 'Cut Loss: ${cutLossProfit.toStringAsFixed(2)}%',
+                                 child: Text(cutLoss.toStringAsFixed(2), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+                             ),
                          ],
                      ),
                      if (trailing != null)
-                     Column(
+                     Wrap(
                          children: [
                              const Text('Trailing Profit', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                             Text(trailing.toStringAsFixed(2), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
+                             Tooltip(
+                                 message: 'Trailing Profit: ${trailingProfit.toStringAsFixed(2)}%',
+                                 child: Text(trailing.toStringAsFixed(2), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: trailingProfit > 0 ? Colors.green : Colors.red)),
+                             ),
                          ],
                      ),
                  ],
              ),
-              if (session.entryPrice != null) ...[
-                  const SizedBox(height: 8),
-                  Text('Entry Risk: ${((session.entryPrice! - cutLoss) / session.entryPrice! * 100).toStringAsFixed(2)}%', style: const TextStyle(color: Colors.redAccent)),
-              ],
-              
-              const SizedBox(height: 8),
-              if (trendAnalysis != null) ...[
-                  const Divider(),
-                  Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                          color: _getRiskColor(trendAnalysis.riskLevel).withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: _getRiskColor(trendAnalysis.riskLevel)),
-                      ),
-                      child: Column(
-                          children: [
-                              Text('Risk Level: ${trendAnalysis.riskLevel} (Score: ${trendAnalysis.score})', 
-                                  style: TextStyle(fontWeight: FontWeight.bold, color: _getRiskColor(trendAnalysis.riskLevel))),
-                              const SizedBox(height: 4),
-                              Text('Trend: ${trendAnalysis.trend}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              Text(trendAnalysis.details, style: const TextStyle(fontSize: 11), textAlign: TextAlign.center),
-                              
-                              const Divider(),
-                              const Text('Safe Entry Analysis (Intraday)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                              const SizedBox(height: 4),
-                              Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                      Text('Range: ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                      Text('[${trendAnalysis.safeRangeLow.toStringAsFixed(2)} - ${trendAnalysis.safeRangeHigh.toStringAsFixed(2)}]', 
-                                          style: const TextStyle(fontSize: 12, fontFamily: 'Monospace')),
-                                  ],
-                              ),
-                              const SizedBox(height: 4),
-                              Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(
-                                      color: trendAnalysis.isSafeEntry ? Colors.green.shade100 : Colors.red.shade100,
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: trendAnalysis.isSafeEntry ? Colors.green : Colors.red),
-                                  ),
-                                  child: Text(
-                                      trendAnalysis.isSafeEntry ? 'SAFE TO ENTER' : trendAnalysis.safeEntrySignal,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold, 
-                                          fontSize: 12, 
-                                          color: trendAnalysis.isSafeEntry ? Colors.green.shade900 : Colors.red.shade900
-                                      ),
-                                      textAlign: TextAlign.center,
-                                  ),
-                              ),
-                          ],
-                      ),
-                  ),
-              ],
-              
               const SizedBox(height: 8),
               // EMA Display
               Wrap(
@@ -487,19 +384,49 @@ class _SessionViewState extends State<_SessionView> {
                   ],
               ),
               const SizedBox(height: 8),
+              // Trend Analysis Section
+              if (session.trendAnalysis != null) ...[
+                  ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: Text(
+                          '${session.trendAnalysis!.trend} • ${session.trendAnalysis!.riskLevel}',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: _getTrendColor(session.trendAnalysis!.trend),
+                          ),
+                      ),
+                      children: [
+                          Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                      session.trendAnalysis!.details,
+                                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                                  ),
+                              ),
+                          ),
+                      ],
+                  ),
+                  const SizedBox(height: 8),
+              ],
               Text(session.equation ?? '', style: const TextStyle(fontSize: 12, color: Colors.grey), textAlign: TextAlign.center),
            ],
          ),
        ),
      );
    }
-   
-   Color _getRiskColor(String level) {
-       if (level.contains('Low')) return Colors.green;
-       if (level.contains('Moderate')) return Colors.orange;
-       if (level.contains('High')) return Colors.red;
-       return Colors.grey;
-   }
+  
+  Color _getTrendColor(String trend) {
+      if (trend.toLowerCase().contains('uptrend')) return Colors.green;
+      if (trend.toLowerCase().contains('downtrend')) return Colors.red;
+      return Colors.orange;
+  }
  
 
  }
@@ -651,14 +578,95 @@ class _SessionChartState extends State<SessionChart> {
     _trackballBehavior = TrackballBehavior(
       enable: true,
       activationMode: ActivationMode.singleTap,
-      tooltipDisplayMode: TrackballDisplayMode.floatAllPoints,
+      tooltipSettings: InteractiveTooltip(enable: true),
+      // builder: _buildTrackballTooltip,
     );
-
     // Attempt init
     if (widget.session.stockQuote != null) {
       _resetVisibleRange();
     }
   }
+  int _volumeScaleFactor = 1;
+
+/*  Widget _buildTrackballTooltip(BuildContext context, TrackballDetails details) {
+    // Get point information
+    final pointInfo = details.point;
+    if (pointInfo == null) return const SizedBox();
+    
+    // Get candles data
+    final candles = widget.session.stockQuote?.candles;
+    if (candles == null || candles.isEmpty) return const SizedBox();
+    
+    // Match candle by x-value (DateTime)
+    final xValue = pointInfo.x;
+    Candle? matchedCandle;
+     
+    if (xValue is DateTime) {
+      // Convert to timestamp for comparison
+      final targetTimestamp = xValue.millisecondsSinceEpoch ~/ 1000;
+      
+      // Find exact or closest candle by timestamp
+      int closestIndex = 0;
+      int minDiff = (candles[0].date - targetTimestamp).abs();
+      
+      for (int i = 0; i < candles.length; i++) {
+        final diff = (candles[i].date - targetTimestamp).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIndex = i;
+        }
+        // If exact match found, use it
+        if (diff == 0) {
+          closestIndex = i;
+          break;
+        }
+      }
+      
+      matchedCandle = candles[closestIndex];
+    }
+    
+    if (matchedCandle == null) return const SizedBox();
+    
+    final c = matchedCandle;
+
+    // Format date
+    final date = DateTime.fromMillisecondsSinceEpoch(c.date * 1000);
+    final dateStr = "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+
+    // OHLC values
+    final open  = c.open.toStringAsFixed(2);
+    final high  = c.high.toStringAsFixed(2);
+    final low   = c.low.toStringAsFixed(2);
+    final close = c.close.toStringAsFixed(2);
+
+    // Apply scale factor
+    final scale = _volumeScaleFactor;
+    final volScaled = c.volume / scale;
+    final volStr = scale == 1
+        ? volScaled.toStringAsFixed(0)
+        : scale == 1000
+            ? "${volScaled.toStringAsFixed(1)}K"
+            : "${volScaled.toStringAsFixed(1)}M";
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("📅 $dateStr", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Text("O: $open   H: $high", style: const TextStyle(color: Colors.white)),
+          Text("L: $low    C: $close", style: const TextStyle(color: Colors.white)),
+          Text("Vol: $volStr", style: const TextStyle(color: Colors.white)),
+        ],
+      ),
+    );
+  } */
+
   
   @override
   void didUpdateWidget(SessionChart oldWidget) {
@@ -696,6 +704,7 @@ class _SessionChartState extends State<SessionChart> {
     if (widget.session.stockQuote == null) return const SizedBox();
 
     final candles = widget.session.stockQuote!.candles;
+    const seriesName = 'Price';
 
     return Stack(
       children: [
@@ -726,34 +735,63 @@ class _SessionChartState extends State<SessionChart> {
             opposedPosition: true,
             majorGridLines: const MajorGridLines(width: 0.5),
           ),
+          axes: [
+            NumericAxis(
+              name: 'volumeAxis',
+              opposedPosition: false,
+              majorGridLines: const MajorGridLines(width: 0),
+              maximum: null, // Auto-scale
+            ),
+          ],
           zoomPanBehavior: _zoomPanBehavior,
           trackballBehavior: _trackballBehavior,
           indicators: [
             EmaIndicator<domain.Candle, DateTime>(
               name: 'EMA 10',
-              seriesName: 'Candles',
+              seriesName: seriesName,
               period: 10,
               valueField: 'close',
               signalLineColor: Colors.blue,
             ),
             EmaIndicator<domain.Candle, DateTime>(
               name: 'EMA 20',
-              seriesName: 'Candles',
+              seriesName: seriesName,
               period: 20,
               valueField: 'close',
               signalLineColor: Colors.orange,
             ),
             EmaIndicator<domain.Candle, DateTime>(
               name: 'EMA 50',
-              seriesName: 'Candles',
+              seriesName: seriesName,
               period: 50,
               valueField: 'close',
               signalLineColor: Colors.purple,
             ),
           ],
           series: <CartesianSeries<domain.Candle, DateTime>>[
+            // Volume bars (behind candles) - scaled down for visibility
+            ColumnSeries<domain.Candle, DateTime>(
+              dataSource: candles,
+              xValueMapper: (domain.Candle c, _) => DateTime.fromMillisecondsSinceEpoch(c.date * 1000),
+              yValueMapper: (domain.Candle c, _) {
+                // Smart scaling: calculate divisor based on max volume in dataset
+                final maxVolume = candles.map((c) => c.volume).reduce((a, b) => a > b ? a : b);
+                final scaleFactor = maxVolume > 1000000 
+                    ? 1000000  // Millions -> show in M
+                    : maxVolume > 1000 
+                        ? 1000 // Thousands -> show in K
+                        : 1;   // Small volumes, no scaling
+                _volumeScaleFactor = scaleFactor;
+                return c.volume / scaleFactor;
+              },
+              yAxisName: 'volumeAxis',
+              color: Colors.blue.withValues(alpha: 0.3),
+              borderColor: Colors.blue.withValues(alpha: 0.5),
+              borderWidth: 1,
+            ),
+            // Candlesticks (on top)
             CandleSeries<domain.Candle, DateTime>(
-              name: 'Candles',
+              name: seriesName,
               dataSource: candles,
               xValueMapper: (domain.Candle c, _) => DateTime.fromMillisecondsSinceEpoch(c.date * 1000),
               lowValueMapper: (domain.Candle c, _) => c.low,

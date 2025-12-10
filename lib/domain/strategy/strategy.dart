@@ -1,18 +1,6 @@
 import 'dart:math';
 import '../model/stock_data.dart';
 
-class StrategyResult {
-  final double cutLossPrice;
-  final double? trailingStopPrice;
-  final String equation;
-
-  StrategyResult({
-    required this.cutLossPrice,
-    this.trailingStopPrice,
-    required this.equation,
-  });
-}
-
 abstract class StopStrategy {
   String get name;
   StrategyResult calculateStopPrice(List<Candle> candles, {DateTime? entryDate, double? entryPrice});
@@ -60,52 +48,49 @@ class AtrStopStrategy implements StopStrategy {
         return StrategyResult(cutLossPrice: 0.0, equation: 'Not enough data');
     }
     
-    // 1. Cut Loss: Use historical ATR (at entry or reference point)
-    // Determine reference index and close price for Cut Loss
+    // === PART 1: Calculate ATR ===
+    final currentATR = _calculateATR(candles, candles.length - 1, period);
+    if (currentATR == null) {
+        return StrategyResult(cutLossPrice: 0.0, equation: 'Error calculating ATR');
+    }
     
-    int cutLossRefIndex = candles.length - 1; // Default to latest
+    // === PART 2: Determine Entry Reference ===
+    int cutLossRefIndex = candles.length - 1;
     double refClose = 0.0;
     String cutLossRefDesc = '';
-    bool usedExplicitRef = false;
+    bool hasEntry = false;
 
     if (entryPrice != null) {
         refClose = entryPrice;
-        cutLossRefDesc = 'Entry Price';
-        usedExplicitRef = true;
-        // Use latest ATR when entry price is manually specified
+        cutLossRefDesc = 'Entry via Price';
+        hasEntry = true;
         cutLossRefIndex = candles.length - 1;
     } else if (entryDate != null) {
-        // Find candle matching entry date
         final eY = entryDate.year;
         final eM = entryDate.month;
         final eD = entryDate.day;
         
-        int foundIndex = -1;
         for (int i = 0; i < candles.length; i++) {
             final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
             if (d.year == eY && d.month == eM && d.day == eD) {
-                foundIndex = i;
+                cutLossRefIndex = i;
+                refClose = candles[i].close;
+                cutLossRefDesc = 'Entry via Close';
+                hasEntry = true;
                 break;
             }
         }
-        
-        if (foundIndex != -1) {
-            cutLossRefIndex = foundIndex;
-            refClose = candles[foundIndex].close;
-            cutLossRefDesc = 'Entry Close';
-            usedExplicitRef = true;
-        }
     }
 
-    if (!usedExplicitRef) {
-        // Fallback: Trading Hours logic
+    if (!hasEntry) {
+        // No entry yet - use trading hours logic for reference
         final nowUtc = DateTime.now().toUtc();
         final hour = nowUtc.hour;
-        final isTradingHours = hour >= 13 && hour < 22; 
+        final isTradingHours = hour >= 13 && hour < 22;
         
         cutLossRefIndex = candles.length - 1;
         refClose = candles.last.close;
-        cutLossRefDesc = 'Last Close';
+        cutLossRefDesc = 'Current Close';
         
         if (isTradingHours && candles.length > 1) {
             cutLossRefIndex = candles.length - 2;
@@ -114,32 +99,21 @@ class AtrStopStrategy implements StopStrategy {
         }
     }
 
-    // Calculate Cut Loss ATR (historical, at reference point)
-    final cutLossATR = _calculateATR(candles, cutLossRefIndex, period);
-    if (cutLossATR == null) {
-        return StrategyResult(cutLossPrice: 0.0, equation: 'Error calculating Cut Loss ATR');
-    }
-    
+    // Calculate Cut Loss ATR (historical if entry exists)
+    final cutLossATR = _calculateATR(candles,cutLossRefIndex, period) ?? currentATR;
     final cutLoss = refClose - (cutLossATR * multiplier);
     
-    // 2. Trailing Profit: Use current ATR (latest data)
-    final currentATR = _calculateATR(candles, candles.length - 1, period);
-    if (currentATR == null) {
-        return StrategyResult(cutLossPrice: cutLoss, equation: 'Cut Loss: ${cutLoss.toStringAsFixed(2)}\nError calculating Trailing ATR');
-    }
-    
+    // === PART 3: Calculate Trailing Stop ===
     double highestClose = 0.0;
-    String referenceDesc = '';
     double? trailingStop;
     
-    if (entryDate != null) {
+    if (hasEntry && entryDate != null) {
         final entryTs = entryDate.millisecondsSinceEpoch / 1000;
         final relevantCandles = candles.where((c) => c.date >= entryTs).toList();
         
         if (relevantCandles.isNotEmpty) {
             highestClose = relevantCandles.map((c) => c.close).reduce(max);
             trailingStop = highestClose - (currentATR * multiplier);
-            referenceDesc = 'Highest Close since Entry';
         }
     } else {
         final lookback = period;
@@ -147,26 +121,168 @@ class AtrStopStrategy implements StopStrategy {
         final relevantCandles = candles.sublist(startIdx);
         highestClose = relevantCandles.map((c) => c.close).reduce(max);
         trailingStop = highestClose - (currentATR * multiplier);
-        referenceDesc = 'Highest Close (Last $period days)';
     }
 
-    // Build equation string
-    final sb = StringBuffer();
-    // Show both ATRs if they differ significantly
-    if ((cutLossATR - currentATR).abs() > 0.01) {
-        sb.writeln('Cut Loss ATR: ${cutLossATR.toStringAsFixed(2)} | Current ATR: ${currentATR.toStringAsFixed(2)}');
-    } else {
-        sb.writeln('ATR: ${cutLossATR.toStringAsFixed(2)}');
+    // === PART 4: Post-Entry Analysis (if entry exists) ===
+    PostEntryAnalysis? postEntry;
+    if (hasEntry && entryDate != null && entryPrice != null) {
+        // Calculate EMA20 for post-entry check
+        final ema20Series = EmaStopStrategy.calculateValidSeries(candles, 20);
+        final ema20 = ema20Series.last ?? candles.last.close;
+        
+        // Import TrendAnalyzer would create circular dependency, so inline basic check
+        final entryTs = entryDate.millisecondsSinceEpoch ~/ 1000;
+        int entryIndex = -1;
+        for (int i = 0; i < candles.length; i++) {
+            if (candles[i].date >= entryTs) {
+                entryIndex = i;
+                break;
+            }
+        }
+        
+        if (entryIndex != -1) {
+            final daysHeld = candles.length - 1 - entryIndex;
+            final currentPrice = candles.last.close;
+            final aboveEma = currentPrice > ema20;
+            
+            double lowestLowSinceEntry = double.infinity;
+            for (int i = entryIndex; i < candles.length; i++) {
+                lowestLowSinceEntry = min(lowestLowSinceEntry, candles[i].low);
+            }
+            
+            final structureBreakLevel = entryPrice - (1.5 * currentATR);
+            final structureIntact = lowestLowSinceEntry > structureBreakLevel;
+            
+            TradeState state;
+            String note;
+            
+            if (daysHeld < 3) {
+                state = TradeState.waitingConfirmation;
+                note = 'Day $daysHeld/3-7: Waiting confirmation';
+            } else if (!structureIntact) {
+                state = TradeState.failed;
+                note = 'Structure broken';
+            } else if (!aboveEma && daysHeld >= 7) {
+                state = TradeState.failed;
+                note = 'Failed to hold above EMA20';
+            } else if (aboveEma && structureIntact && daysHeld >= 3) {
+                state = TradeState.confirmed;
+                note = 'Confirmed ($daysHeld days)';
+            } else {
+                state = TradeState.waitingConfirmation;
+                note = 'Day $daysHeld: Monitoring';
+            }
+            
+            postEntry = PostEntryAnalysis(
+                state: state,
+                daysHeld: daysHeld,
+                structureIntact: structureIntact,
+                aboveKeyEma: aboveEma,
+                note: note,
+            );
+        }
     }
+    
+    // === PART 5: Profit Management (Breakeven & Targets) ===
+    bool moveToBreakeven = false;
+    double? partialProfitTarget;
+    
+    if (hasEntry && entryPrice != null) {
+        final currentPrice = candles.last.close;
+        final riskAmount = (entryPrice - cutLoss).abs();
+        final currentGain = currentPrice - entryPrice;
+        final rMultiple = riskAmount > 0 ? currentGain / riskAmount : 0;
+        
+        // Move to breakeven if > 1R profit
+        if (rMultiple >= 1.0) {
+            moveToBreakeven = true;
+        }
+        
+        // Set partial profit target at 2R
+        if (rMultiple < 2.0) {
+            partialProfitTarget = entryPrice + (2.0 * riskAmount);
+        }
+    }
+    
+    // === PART 6: Entry Validation (Pre-Entry Analysis) ===
+    bool canEnter = true;
+    String entryReason = '';
+    bool breakoutDetected = false;
+    
+    if (!hasEntry) {
+        final currentPrice = candles.last.close;
+        
+        // Check breakout
+        if (candles.length >= 21) {
+            double highestPrev = double.negativeInfinity;
+            for (int i = max(0, candles.length - 21); i < candles.length - 1; i++) {
+                highestPrev = max(highestPrev, candles[i].close);
+            }
+            breakoutDetected = currentPrice > highestPrev;
+        }
+        
+        // Basic EMA check for entry
+        final ema20Series = EmaStopStrategy.calculateValidSeries(candles, 20);
+        final ema20 = ema20Series.last;
+        
+        if (ema20 != null) {
+            final distFromEma = (currentPrice - ema20) / currentATR;
+            
+            if (distFromEma > 1.0) {
+                canEnter = false;
+                entryReason = 'Too far above EMA20 (chasing)';
+            } else if (distFromEma < -0.5) {
+                canEnter = false;
+                entryReason = 'Price below EMA20 (weak structure)';
+            } else {
+                canEnter = true;
+                entryReason = breakoutDetected ? 'Breakout + Good position' : 'Within safe entry range';
+            }
+        }
+    }
+    
+    // === PART 7: Build Equation ===
+    final sb = StringBuffer();
+    if ((cutLossATR - currentATR).abs() > 0.01) {
+        sb.writeln('Entry ATR: ${cutLossATR.toStringAsFixed(2)} | Current ATR: ${currentATR.toStringAsFixed(2)}');
+    } else {
+        sb.writeln('ATR: ${currentATR.toStringAsFixed(2)}');
+    }
+    
     sb.writeln('Cut Loss: $cutLossRefDesc (${refClose.toStringAsFixed(2)}) - ${multiplier}x ATR = ${cutLoss.toStringAsFixed(2)}');
+    
     if (trailingStop != null) {
-        sb.writeln('Trailing: $referenceDesc (${highestClose.toStringAsFixed(2)}) - ${multiplier}x Current ATR = ${trailingStop.toStringAsFixed(2)}');
+        sb.writeln('Trailing: Highest Close (${highestClose.toStringAsFixed(2)}) - ${multiplier}x ATR = ${trailingStop.toStringAsFixed(2)}');
+    }
+    
+    if (postEntry != null) {
+        sb.writeln('Status: ${postEntry.note}');
+    }
+    
+    if (moveToBreakeven) {
+        sb.writeln('💡 Move stop to breakeven (${entryPrice!.toStringAsFixed(2)})');
+    }
+    
+    if (partialProfitTarget != null) {
+        sb.writeln('🎯 Partial profit target: ${partialProfitTarget.toStringAsFixed(2)} (2R)');
+    }
+    
+    if (!hasEntry && !canEnter) {
+        sb.writeln('⚠️  Entry: $entryReason');
+    } else if (!hasEntry && breakoutDetected) {
+        sb.writeln('✅ Breakout detected');
     }
     
     return StrategyResult(
-        cutLossPrice: cutLoss, 
+        cutLossPrice: cutLoss,
         trailingStopPrice: trailingStop,
         equation: sb.toString(),
+        postEntry: postEntry,
+        canEnter: canEnter,
+        entryReason: entryReason,
+        breakoutDetected: breakoutDetected,
+        moveToBreakeven: moveToBreakeven,
+        partialProfitTarget: partialProfitTarget,
     );
   }
 }
