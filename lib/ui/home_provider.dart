@@ -219,6 +219,7 @@ class HomeProvider extends ChangeNotifier {
         forceRefresh: forceRefresh,
       );
       session.symbol = session.stockQuote?.symbol;
+      session.lastRefreshedAt = DateTime.now();
       addToHistory(session.symbol!); // Add to history
       _calculateStop(session);
       saveSessions();
@@ -268,6 +269,7 @@ class HomeProvider extends ChangeNotifier {
     session.cutLossPrice = result.cutLossPrice;
     session.trailingStopPrice = result.trailingStopPrice;
     session.equation = result.equation;
+    session.monitorResult = result.monitorResult;
 
     // Calculate Trend/Risk using new simplified TrendAnalyzer
     final candles = session.stockQuote!.candles;

@@ -52,10 +52,10 @@ class StockQuote {
 
 /// Trade lifecycle states for post-entry monitoring
 enum TradeState {
-  notEntered,           // No position yet
-  waitingConfirmation,  // Position entered, waiting 3-7 days for confirmation
-  confirmed,            // Trend confirmed, normal trade management
-  failed                // Confirmation failed, should exit
+  notEntered, // No position yet
+  waitingConfirmation, // Position entered, waiting 3-7 days for confirmation
+  confirmed, // Trend confirmed, normal trade management
+  failed, // Confirmation failed, should exit
 }
 
 /// Result of post-entry trend confirmation analysis
@@ -65,7 +65,7 @@ class PostEntryAnalysis {
   final bool structureIntact;
   final bool aboveKeyEma;
   final String note;
-  
+
   PostEntryAnalysis({
     required this.state,
     required this.daysHeld,
@@ -81,8 +81,9 @@ class StructureAnalysis {
   final bool hasHigherLows;
   final int peakCount;
   final int troughCount;
-  final String pattern; // "Uptrend Structure", "Downtrend Structure", "No Clear Pattern"
-  
+  final String
+  pattern; // "Uptrend Structure", "Downtrend Structure", "No Clear Pattern"
+
   StructureAnalysis({
     required this.hasHigherHighs,
     required this.hasHigherLows,
@@ -98,25 +99,29 @@ class StrategyResult {
   final double cutLossPrice;
   final double? trailingStopPrice;
   final String equation;
-  
+
   // Post-entry monitoring (null if not entered)
   final PostEntryAnalysis? postEntry;
-  
+
+  // Monitor analysis (null if not entered)
+  final dynamic monitorResult; // MonitorResult from monitor_engine.dart
+
   // Entry analysis
   final bool canEnter;
   final String entryReason;
   final bool breakoutDetected;
-  
+
   // Risk management
   final double? suggestedPositionSize;
   final bool moveToBreakeven;
   final double? partialProfitTarget;
-  
+
   StrategyResult({
     required this.cutLossPrice,
     this.trailingStopPrice,
     required this.equation,
     this.postEntry,
+    this.monitorResult,
     this.canEnter = true,
     this.entryReason = '',
     this.breakoutDetected = false,

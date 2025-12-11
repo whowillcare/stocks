@@ -5,6 +5,7 @@ import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:intl/intl.dart';
 import '../domain/model/search_result.dart';
 import '../domain/model/stock_data.dart' as domain; // Alias to avoid collision
+import '../domain/analysis/monitor_engine.dart';
 import 'home_provider.dart';
 import 'stock_session.dart';
 import '../domain/strategy/strategy.dart'; // For calculation logic
@@ -429,23 +430,22 @@ class _SessionViewState extends State<_SessionView> {
     final trailingProfit = trailing != null ? percentage(trailing) : 0.0;
     final cutLossProfit = percentage(cutLoss);
 
+    final refreshedStr = session.lastRefreshedAt != null
+        ? DateFormat('yyyy-MM-dd HH:mm:ss').format(session.lastRefreshedAt!)
+        : 'Unknown';
+
     return Card(
       color: Colors.blue.shade50,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            Row(
-              children: [
-                Text(
-                  'Date: $dateStr',
-                  style: const TextStyle(fontStyle: FontStyle.italic),
-                ),
-                Text(
-                  'Current Price: ${lastClose.toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 18),
-                ),
-              ],
+            Tooltip(
+              message: 'Last refreshed: $refreshedStr',
+              child: Text(
+                'Price: ${lastClose.toStringAsFixed(2)}@$dateStr',
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             const Divider(),
             Row(
@@ -559,6 +559,11 @@ class _SessionViewState extends State<_SessionView> {
               ),
               const SizedBox(height: 8),
             ],
+            // Monitor Result Section (only when entry exists)
+            if (session.monitorResult != null) ...[
+              _buildMonitorResultWidget(session.monitorResult!),
+              const SizedBox(height: 8),
+            ],
             Text(
               session.equation ?? '',
               style: const TextStyle(fontSize: 12, color: Colors.grey),
@@ -574,6 +579,126 @@ class _SessionViewState extends State<_SessionView> {
     if (trend.toLowerCase().contains('uptrend')) return Colors.green;
     if (trend.toLowerCase().contains('downtrend')) return Colors.red;
     return Colors.orange;
+  }
+
+  Widget _buildMonitorResultWidget(MonitorResult monitor) {
+    Color stateColor;
+    switch (monitor.state) {
+      case 'trend_continuation':
+        stateColor = Colors.green;
+        break;
+      case 'trend_failure':
+        stateColor = Colors.red;
+        break;
+      case 'sideways_consolidation':
+        stateColor = Colors.orange;
+        break;
+      default:
+        stateColor = Colors.grey;
+    }
+
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      leading: Text(monitor.stateEmoji, style: const TextStyle(fontSize: 18)),
+      title: Text(
+        monitor.stateLabel,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: stateColor,
+        ),
+      ),
+      subtitle: const Text(
+        'Monitor Analysis (Post-Entry)',
+        style: TextStyle(fontSize: 10, color: Colors.grey),
+      ),
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildMonitorSection(
+                  '📈 Continuation',
+                  monitor.continuation,
+                  Colors.green,
+                ),
+                const Divider(height: 16),
+                _buildMonitorSection(
+                  '❌ Failure Signals',
+                  monitor.failure,
+                  Colors.red,
+                ),
+                const Divider(height: 16),
+                _buildMonitorSection(
+                  '⏸️ Sideways',
+                  monitor.sideways,
+                  Colors.orange,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonitorSection(
+    String title,
+    Map<String, dynamic> data,
+    Color color,
+  ) {
+    final entries = data.entries.where((e) => e.value is bool).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: color,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+        ...entries.map(
+          (e) => Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Row(
+              children: [
+                Icon(
+                  e.value == true ? Icons.check_circle : Icons.cancel,
+                  size: 14,
+                  color: e.value == true ? Colors.green : Colors.grey,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _camelToTitle(e.key),
+                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _camelToTitle(String s) {
+    return s
+        .replaceAllMapped(RegExp(r'([A-Z])'), (m) => ' ${m.group(1)}')
+        .split(' ')
+        .map(
+          (w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '',
+        )
+        .join(' ')
+        .trim();
   }
 }
 

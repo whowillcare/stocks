@@ -29,6 +29,96 @@ class Indicator {
     return out;
   }
 
+  /// OBV Indicator
+  static List<double> calculateOBV(List<double> closes, List<double> volumes) {
+    List<double> obv = [0];
+
+    for (int i = 1; i < closes.length; i++) {
+      if (closes[i] > closes[i - 1]) {
+        obv.add(obv.last + volumes[i]);
+      } else if (closes[i] < closes[i - 1]) {
+        obv.add(obv.last - volumes[i]);
+      } else {
+        obv.add(obv.last);
+      }
+    }
+    return obv;
+  }
+
+  /// Detect a Higher Low pattern (HL)
+  static bool isHigherLow(List<double> lows, {int lookback = 3}) {
+    if (lows.length < lookback) return false;
+    return lows[lows.length - 1] > lows[lows.length - 2];
+  }
+
+  /// Price falling while volume rising → bearish pressure
+  static bool isPriceDownVolumeUp({
+    required List<double> closes,
+    required List<double> volumes,
+  }) {
+    if (closes.length < 2) return false;
+
+    bool priceDown = closes.last < closes[closes.length - 2];
+    bool volumeUp = volumes.last > volumes[volumes.length - 2];
+
+    return priceDown && volumeUp;
+  }
+
+  /// Green day = close > previous close
+  /// Check if volume is increasing on green days
+  static bool isVolumeRisingOnGreen({
+    required List<double> closes,
+    required List<double> volumes,
+  }) {
+    if (closes.length < 2) return false;
+
+    bool greenDay = closes.last > closes[closes.length - 2];
+    bool volumeUp = volumes.last > volumes[volumes.length - 2];
+
+    return greenDay && volumeUp;
+  }
+
+  /// OBV dropping while price rising or flat → divergence bearish
+  static bool isObvBearishDivergence({
+    required List<double> closes,
+    required List<double> obv,
+  }) {
+    if (closes.length < 2 || obv.length < 2) return false;
+
+    bool priceFlatUp = closes.last >= closes[closes.length - 2];
+    bool obvDown = obv.last < obv[obv.length - 2];
+
+    return priceFlatUp && obvDown;
+  }
+
+  /// Volume dry-up → sideways consolidation
+  static bool dryingVolume(List<double> volumes, {int lookback = 5}) {
+    if (volumes.length < lookback + 1) return false;
+
+    double recent = volumes.last;
+    double avgPast =
+        volumes
+            .sublist(volumes.length - lookback - 1, volumes.length - 1)
+            .reduce((a, b) => a + b) /
+        lookback;
+
+    return recent < avgPast * 0.6; // 40% drop in volume → drying
+  }
+
+  /// Volume spike down (panic)
+  static bool isVolumeSpikeDown(List<double> volumes, {int lookback = 5}) {
+    if (volumes.length < lookback + 1) return false;
+
+    double recent = volumes.last;
+    double avgPast =
+        volumes
+            .sublist(volumes.length - lookback - 1, volumes.length - 1)
+            .reduce((a, b) => a + b) /
+        lookback;
+
+    return recent < avgPast * 0.4; // >60% drop = spike down
+  }
+
   /// True Range series from candles
   static List<double> tr(List<Candle> bars) {
     final t = List<double>.filled(bars.length, double.nan);
@@ -112,8 +202,9 @@ List<int> _localTroughs(List<double> arr) {
 
 /// Check HH/HL/LH/LL structure signals over last lookback days
 Map<String, bool> structureSignals(List<Candle> bars, {int lookback = 14}) {
-  if (bars.length < 5)
+  if (bars.length < 5) {
     return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
+  }
   final sliceStart = max(0, bars.length - lookback);
   final sub = bars.sublist(sliceStart);
   final highs = sub.map((b) => b.high).toList();

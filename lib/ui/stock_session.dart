@@ -1,9 +1,8 @@
-
 import 'package:uuid/uuid.dart';
 
 import '../domain/model/stock_data.dart';
 import '../domain/analysis/trend_analyzer.dart';
-
+import '../domain/analysis/monitor_engine.dart';
 
 class StockSession {
   final String id;
@@ -11,20 +10,23 @@ class StockSession {
   StockQuote? stockQuote;
   bool isLoading = false;
   String? errorMessage;
-  
+
   int selectedStrategyIndex = 0;
-  
+
   double? trailingStopPrice;
   double? cutLossPrice;
   String? equation;
-  
+
   TrendAnalysisResult? trendAnalysis;
+  MonitorResult? monitorResult;
 
   DateTime? entryDate;
   double? entryPrice;
 
+  DateTime? lastRefreshedAt;
+
   StockSession(this.id);
-  
+
   String get title => symbol ?? 'New Tab';
 
   Map<String, dynamic> toJson() {

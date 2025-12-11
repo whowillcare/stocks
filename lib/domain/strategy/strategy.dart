@@ -5,6 +5,7 @@
 import 'dart:math';
 import '../model/stock_data.dart';
 import '../analysis/trend_analyzer.dart';
+import '../analysis/monitor_engine.dart';
 
 abstract class StopStrategy {
   String get name;
@@ -64,11 +65,7 @@ class AtrStopStrategy implements StopStrategy {
     double entryRef = priceNow;
     String refDesc = 'Current Close';
 
-    if (entryPrice != null) {
-      entryRef = entryPrice;
-      refDesc = 'Entry Price';
-      hasEntry = true;
-    } else if (entryDate != null) {
+    if (entryDate != null) {
       final eY = entryDate.year;
       final eM = entryDate.month;
       final eD = entryDate.day;
@@ -76,9 +73,15 @@ class AtrStopStrategy implements StopStrategy {
         final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
         if (d.year == eY && d.month == eM && d.day == eD) {
           entryIndex = i;
-          entryRef = candles[i].close;
-          refDesc = 'Entry Close';
-          hasEntry = true;
+          if (entryPrice != null) {
+            entryRef = entryPrice;
+            refDesc = 'Entry Price';
+            hasEntry = true;
+          } else {
+            entryRef = candles[i].close;
+            refDesc = 'Entry Close';
+            hasEntry = true;
+          }
           break;
         }
       }
@@ -109,13 +112,16 @@ class AtrStopStrategy implements StopStrategy {
 
     // === Trailing Stop (never decreases) ===
     double highestCloseSinceEntry = priceNow;
+    String highestCloseDesc = 'Current Close';
     if (hasEntry && entryIndex >= 0) {
       for (int i = entryIndex; i <= last; i++) {
         highestCloseSinceEntry = max(highestCloseSinceEntry, closes[i]);
+        highestCloseDesc = 'Close at ${candles[i].date}';
       }
     } else {
       // Use rolling 60-day highest
       highestCloseSinceEntry = Indicator.rollingHighestClose(closes, last, 60);
+      highestCloseDesc = 'Rolling 60-day High';
     }
 
     final trailingCalc = highestCloseSinceEntry - trailMultiplier * minAtr;
@@ -219,6 +225,29 @@ class AtrStopStrategy implements StopStrategy {
       );
     }
 
+    // === Monitor Engine Analysis (when entered) ===
+    MonitorResult? monitorResult;
+    if (hasEntry && entryIndex >= 0 && entryIndex < candles.length) {
+      // Get data Since entry for monitoring
+      final postEntryCandles = candles.sublist(entryIndex);
+      if (postEntryCandles.length >= 2) {
+        final monitorCloses = postEntryCandles.map((c) => c.close).toList();
+        final monitorHighs = postEntryCandles.map((c) => c.high).toList();
+        final monitorLows = postEntryCandles.map((c) => c.low).toList();
+        final monitorVols = postEntryCandles
+            .map((c) => c.volume.toDouble())
+            .toList();
+
+        final engine = MonitorEngine(
+          closes: monitorCloses,
+          highs: monitorHighs,
+          lows: monitorLows,
+          volumes: monitorVols,
+        );
+        monitorResult = engine.evaluate();
+      }
+    }
+
     // === Profit Management ===
     bool moveToBreakeven = false;
     double? partialProfitTarget;
@@ -235,7 +264,7 @@ class AtrStopStrategy implements StopStrategy {
       'ISL: $refDesc (${entryRef.toStringAsFixed(2)}) - ${stopMultiplier}x ATR(${atrAtEntry.toStringAsFixed(2)}) = ${initialStop.toStringAsFixed(2)}',
     );
     sb.writeln(
-      'Trailing: Highest (${highestCloseSinceEntry.toStringAsFixed(2)}) - ${trailMultiplier}x ATR(${minAtr.toStringAsFixed(2)}) = ${trailingStop.toStringAsFixed(2)}',
+      'Trailing: Highest ($highestCloseDesc ${highestCloseSinceEntry.toStringAsFixed(2)}) - ${trailMultiplier}x ATR(${minAtr.toStringAsFixed(2)}) = ${trailingStop.toStringAsFixed(2)}',
     );
 
     if (postEntry != null) {
@@ -243,6 +272,11 @@ class AtrStopStrategy implements StopStrategy {
     }
 
     if (hasEntry && entryPrice != null) {
+      if (trailingStop > initialStop) {
+        sb.writeln(
+          'Trailing Stop (${trailingStop.toStringAsFixed(2)}) is above initial stop (${initialStop.toStringAsFixed(2)})',
+        );
+      }
       final riskAmount = (entryPrice - initialStop).abs();
       final currentGain = priceNow - entryPrice;
       final rMultiple = riskAmount > 0 ? currentGain / riskAmount : 0;
@@ -280,6 +314,7 @@ class AtrStopStrategy implements StopStrategy {
       trailingStopPrice: trailingStop,
       equation: sb.toString(),
       postEntry: postEntry,
+      monitorResult: monitorResult,
       canEnter: canEnter,
       entryReason: entryReason,
       breakoutDetected: breakoutDetected,
