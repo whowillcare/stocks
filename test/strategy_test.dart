@@ -25,11 +25,11 @@ void main() {
       // TR is max(5, |105-102|, |100-102|) = 5 (approx constant for this simplified data)
       // ATR should be 5.
       
-      final strategy = AtrStopStrategy(period: 14, multiplier: 2.0);
-      final stop = strategy.calculateStopPrice(candles);
+      final strategy = AtrStopStrategy(period: 14, stopMultiplier: 2.0);
+      final result = strategy.calculateStopPrice(candles);
       
       // Stop = LastClose - (ATR * 2) = 102 - (5 * 2) = 92
-      expect(stop, closeTo(92.0, 0.1));
+      expect(result.cutLossPrice, closeTo(92.0, 0.1));
     });
 
     test('EMA Stop Calculation', () {
@@ -46,9 +46,9 @@ void main() {
       
       // EMA of constant series is the constant.
       final strategy = EmaStopStrategy(period: 20);
-      final stop = strategy.calculateStopPrice(candles);
+      final result = strategy.calculateStopPrice(candles);
       
-      expect(stop, closeTo(100.0, 0.1));
+      expect(result.cutLossPrice, closeTo(100.0, 0.1));
     });
   });
 }

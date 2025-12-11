@@ -1,5 +1,10 @@
+// strategy.dart
+// ATR-based stop strategies with entry validation, trailing stop lock,
+// and profit management integrated with TrendAnalyzer
+
 import 'dart:math';
 import '../model/stock_data.dart';
+import '../analysis/trend_analyzer.dart';
 
 abstract class StopStrategy {
   String get name;
@@ -8,281 +13,250 @@ abstract class StopStrategy {
 
 class AtrStopStrategy implements StopStrategy {
   final int period;
-  final double multiplier;
-
-  AtrStopStrategy({this.period = 14, this.multiplier = 3.0});
+  final double stopMultiplier;    // k for ISL (initial stop loss)
+  final double trailMultiplier;   // k for trailing stop
+  
+  AtrStopStrategy({
+    this.period = 14,
+    this.stopMultiplier = 2.0,
+    this.trailMultiplier = 3.0,
+  });
 
   @override
-  String get name => 'ATR Dual Stop ($period, ${multiplier}x)';
-  
-  /// Calculate ATR for candles up to the specified index (inclusive)
-  static double? _calculateATR(List<Candle> candles, int untilIndex, int period) {
-    if (untilIndex < period || candles.isEmpty) return null;
-    
-    List<double> trs = [];
-    // Calculate True Range for the period ending at untilIndex
-    final startIdx = max(0, untilIndex - period);
-    for (int i = startIdx; i <= untilIndex; i++) {
-      if (i == 0) continue;
-      final current = candles[i];
-      final prev = candles[i - 1];
-      final tr = max(
-        current.high - current.low,
-        max(
-          (current.high - prev.close).abs(),
-          (current.low - prev.close).abs()
-        )
-      );
-      trs.add(tr);
-    }
-    
-    if (trs.isEmpty) return null;
-    if (trs.length > period) trs = trs.sublist(trs.length - period);
-    
-    return trs.reduce((a, b) => a + b) / trs.length;
-  }
+  String get name => 'ATR Strategy ($period, ISL:${stopMultiplier}x, Trail:${trailMultiplier}x)';
   
   @override
   StrategyResult calculateStopPrice(List<Candle> candles, {DateTime? entryDate, double? entryPrice}) {
     if (candles.length < period + 1) {
-        return StrategyResult(cutLossPrice: 0.0, equation: 'Not enough data');
+      return StrategyResult(cutLossPrice: 0.0, equation: 'Not enough data');
     }
     
-    // === PART 1: Calculate ATR ===
-    final currentATR = _calculateATR(candles, candles.length - 1, period);
-    if (currentATR == null) {
-        return StrategyResult(cutLossPrice: 0.0, equation: 'Error calculating ATR');
+    final closes = candles.map((c) => c.close).toList();
+    final atrSeries = Indicator.atr(candles, period: period);
+    final ema20Series = Indicator.ema(closes, 20);
+    final ema50Series = Indicator.ema(closes, 50);
+    
+    final last = candles.length - 1;
+    final latestAtr = atrSeries[last];
+    final latestEma20 = ema20Series[last];
+    final latestEma50 = ema50Series[last];
+    final priceNow = closes[last];
+    
+    if (latestAtr.isNaN) {
+      return StrategyResult(cutLossPrice: 0.0, equation: 'Error calculating ATR');
     }
     
-    // === PART 2: Determine Entry Reference ===
-    int cutLossRefIndex = candles.length - 1;
-    double refClose = 0.0;
-    String cutLossRefDesc = '';
+    // === Determine Entry Reference ===
     bool hasEntry = false;
-
+    int entryIndex = -1;
+    double entryRef = priceNow;
+    String refDesc = 'Current Close';
+    
     if (entryPrice != null) {
-        refClose = entryPrice;
-        cutLossRefDesc = 'Entry via Price';
-        hasEntry = true;
-        cutLossRefIndex = candles.length - 1;
+      entryRef = entryPrice;
+      refDesc = 'Entry Price';
+      hasEntry = true;
     } else if (entryDate != null) {
-        final eY = entryDate.year;
-        final eM = entryDate.month;
-        final eD = entryDate.day;
-        
-        for (int i = 0; i < candles.length; i++) {
-            final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
-            if (d.year == eY && d.month == eM && d.day == eD) {
-                cutLossRefIndex = i;
-                refClose = candles[i].close;
-                cutLossRefDesc = 'Entry via Close';
-                hasEntry = true;
-                break;
-            }
+      final eY = entryDate.year;
+      final eM = entryDate.month;
+      final eD = entryDate.day;
+      for (int i = 0; i < candles.length; i++) {
+        final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
+        if (d.year == eY && d.month == eM && d.day == eD) {
+          entryIndex = i;
+          entryRef = candles[i].close;
+          refDesc = 'Entry Close';
+          hasEntry = true;
+          break;
         }
+      }
     }
-
+    
     if (!hasEntry) {
-        // No entry yet - use trading hours logic for reference
-        final nowUtc = DateTime.now().toUtc();
-        final hour = nowUtc.hour;
-        final isTradingHours = hour >= 13 && hour < 22;
-        
-        cutLossRefIndex = candles.length - 1;
-        refClose = candles.last.close;
-        cutLossRefDesc = 'Current Close';
-        
-        if (isTradingHours && candles.length > 1) {
-            cutLossRefIndex = candles.length - 2;
-            refClose = candles[candles.length - 2].close;
-            cutLossRefDesc = 'Prev Close (Trading Hours)';
-        }
+      // Use trading hours logic
+      final nowUtc = DateTime.now().toUtc();
+      final hour = nowUtc.hour;
+      final isTradingHours = hour >= 13 && hour < 22;
+      
+      if (isTradingHours && candles.length > 1) {
+        entryRef = candles[candles.length - 2].close;
+        refDesc = 'Prev Close (Trading Hours)';
+      }
     }
-
-    // Calculate Cut Loss ATR (historical if entry exists)
-    final cutLossATR = _calculateATR(candles,cutLossRefIndex, period) ?? currentATR;
-    final cutLoss = refClose - (cutLossATR * multiplier);
     
-    // === PART 3: Calculate Trailing Stop ===
-    double highestClose = 0.0;
-    double? trailingStop;
+    // === Initial Stop Loss (ISL) ===
+    final atrAtEntry = hasEntry && entryIndex >= period
+        ? atrSeries[entryIndex]
+        : latestAtr;
+    final minAtr = Indicator.ema(atrSeries, period)
+    .fold<double>(latestAtr, (min, v) => (v < min) ? v : min);
+    final initialStop = entryRef - stopMultiplier * (atrAtEntry.isNaN ? latestAtr : atrAtEntry);
     
-    if (hasEntry && entryDate != null) {
-        final entryTs = entryDate.millisecondsSinceEpoch / 1000;
-        final relevantCandles = candles.where((c) => c.date >= entryTs).toList();
-        
-        if (relevantCandles.isNotEmpty) {
-            highestClose = relevantCandles.map((c) => c.close).reduce(max);
-            trailingStop = highestClose - (currentATR * multiplier);
-        }
+    // === Trailing Stop (never decreases) ===
+    double highestCloseSinceEntry = priceNow;
+    if (hasEntry && entryIndex >= 0) {
+      for (int i = entryIndex; i <= last; i++) {
+        highestCloseSinceEntry = max(highestCloseSinceEntry, closes[i]);
+      }
     } else {
-        final lookback = period;
-        final startIdx = max(0, candles.length - lookback);
-        final relevantCandles = candles.sublist(startIdx);
-        highestClose = relevantCandles.map((c) => c.close).reduce(max);
-        trailingStop = highestClose - (currentATR * multiplier);
-    }
-
-    // === PART 4: Post-Entry Analysis (if entry exists) ===
-    PostEntryAnalysis? postEntry;
-    if (hasEntry && entryDate != null && entryPrice != null) {
-        // Calculate EMA20 for post-entry check
-        final ema20Series = EmaStopStrategy.calculateValidSeries(candles, 20);
-        final ema20 = ema20Series.last ?? candles.last.close;
-        
-        // Import TrendAnalyzer would create circular dependency, so inline basic check
-        final entryTs = entryDate.millisecondsSinceEpoch ~/ 1000;
-        int entryIndex = -1;
-        for (int i = 0; i < candles.length; i++) {
-            if (candles[i].date >= entryTs) {
-                entryIndex = i;
-                break;
-            }
-        }
-        
-        if (entryIndex != -1) {
-            final daysHeld = candles.length - 1 - entryIndex;
-            final currentPrice = candles.last.close;
-            final aboveEma = currentPrice > ema20;
-            
-            double lowestLowSinceEntry = double.infinity;
-            for (int i = entryIndex; i < candles.length; i++) {
-                lowestLowSinceEntry = min(lowestLowSinceEntry, candles[i].low);
-            }
-            
-            final structureBreakLevel = entryPrice - (1.5 * currentATR);
-            final structureIntact = lowestLowSinceEntry > structureBreakLevel;
-            
-            TradeState state;
-            String note;
-            
-            if (daysHeld < 3) {
-                state = TradeState.waitingConfirmation;
-                note = 'Day $daysHeld/3-7: Waiting confirmation';
-            } else if (!structureIntact) {
-                state = TradeState.failed;
-                note = 'Structure broken';
-            } else if (!aboveEma && daysHeld >= 7) {
-                state = TradeState.failed;
-                note = 'Failed to hold above EMA20';
-            } else if (aboveEma && structureIntact && daysHeld >= 3) {
-                state = TradeState.confirmed;
-                note = 'Confirmed ($daysHeld days)';
-            } else {
-                state = TradeState.waitingConfirmation;
-                note = 'Day $daysHeld: Monitoring';
-            }
-            
-            postEntry = PostEntryAnalysis(
-                state: state,
-                daysHeld: daysHeld,
-                structureIntact: structureIntact,
-                aboveKeyEma: aboveEma,
-                note: note,
-            );
-        }
+      // Use rolling 60-day highest
+      highestCloseSinceEntry = Indicator.rollingHighestClose(closes, last, 60);
     }
     
-    // === PART 5: Profit Management (Breakeven & Targets) ===
-    bool moveToBreakeven = false;
-    double? partialProfitTarget;
+    final trailingCalc = highestCloseSinceEntry - trailMultiplier * minAtr;
+    // Trailing stop = max(initialStop, calculated trailing) - NEVER moves down
+    final trailingStop = max(initialStop, trailingCalc);
     
-    if (hasEntry && entryPrice != null) {
-        final currentPrice = candles.last.close;
-        final riskAmount = (entryPrice - cutLoss).abs();
-        final currentGain = currentPrice - entryPrice;
-        final rMultiple = riskAmount > 0 ? currentGain / riskAmount : 0;
-        
-        // Move to breakeven if > 1R profit
-        if (rMultiple >= 1.0) {
-            moveToBreakeven = true;
-        }
-        
-        // Set partial profit target at 2R
-        if (rMultiple < 2.0) {
-            partialProfitTarget = entryPrice + (2.0 * riskAmount);
-        }
-    }
-    
-    // === PART 6: Entry Validation (Pre-Entry Analysis) ===
+    // === Entry Validation (Pre-Entry Analysis) ===
     bool canEnter = true;
     String entryReason = '';
     bool breakoutDetected = false;
     
     if (!hasEntry) {
-        final currentPrice = candles.last.close;
-        
-        // Check breakout
-        if (candles.length >= 21) {
-            double highestPrev = double.negativeInfinity;
-            for (int i = max(0, candles.length - 21); i < candles.length - 1; i++) {
-                highestPrev = max(highestPrev, candles[i].close);
-            }
-            breakoutDetected = currentPrice > highestPrev;
-        }
-        
-        // Basic EMA check for entry
-        final ema20Series = EmaStopStrategy.calculateValidSeries(candles, 20);
-        final ema20 = ema20Series.last;
-        
-        if (ema20 != null) {
-            final distFromEma = (currentPrice - ema20) / currentATR;
-            
-            if (distFromEma > 1.0) {
-                canEnter = false;
-                entryReason = 'Too far above EMA20 (chasing)';
-            } else if (distFromEma < -0.5) {
-                canEnter = false;
-                entryReason = 'Price below EMA20 (weak structure)';
-            } else {
-                canEnter = true;
-                entryReason = breakoutDetected ? 'Breakout + Good position' : 'Within safe entry range';
-            }
-        }
+      // Check breakout (20-day)
+      if (candles.length >= 21) {
+        final prevHigh = Indicator.rollingHighestClose(closes, last - 1, 20);
+        breakoutDetected = !prevHigh.isNaN && priceNow > prevHigh;
+      }
+      
+      // Entry zone validation
+      final entryMin = latestEma20 - 0.5 * latestAtr;
+      final entryMax = latestEma20 + 0.2 * latestAtr;
+      
+      // Volume check
+      final volumes = candles.map((c) => c.volume.toDouble()).toList();
+      final vol20 = Indicator.rollingAvgVolume(volumes, last, 20);
+      final volConfirm = volumes[last] >= vol20 * 1.2;
+      
+      // Trend score
+      final trendScore = calcTrendScore(candles);
+      
+      if (trendScore < 1) {
+        canEnter = false;
+        entryReason = 'Weak trend (score: $trendScore)';
+      } else if (!volConfirm) {
+        canEnter = false;
+        entryReason = 'Volume below average';
+      } else if (priceNow > entryMax + latestAtr) {
+        canEnter = false;
+        entryReason = 'Chasing (too far above EMA20)';
+      } else if (priceNow < entryMin - latestAtr) {
+        canEnter = false;
+        entryReason = 'Price too far below EMA20';
+      } else if (priceNow >= entryMin && priceNow <= entryMax) {
+        canEnter = true;
+        entryReason = breakoutDetected ? 'Breakout + Good zone' : 'Good entry zone';
+      } else {
+        canEnter = true;
+        entryReason = 'Acceptable (outside optimal zone)';
+      }
+      if (canEnter) {
+       entryReason = '$entryReason at Range($entryMin, $entryMax)';
+      }
     }
     
-    // === PART 7: Build Equation ===
+    // === Post-Entry Analysis ===
+    PostEntryAnalysis? postEntry;
+    if (hasEntry && entryPrice != null) {
+      final daysHeld = entryIndex >= 0 ? (last - entryIndex) : 0;
+      final aboveEma = priceNow > latestEma20;
+      
+      // Structure check: lowest low since entry
+      double lowestLowSinceEntry = double.infinity;
+      if (entryIndex >= 0) {
+        for (int i = entryIndex; i <= last; i++) {
+          lowestLowSinceEntry = min(lowestLowSinceEntry, candles[i].low);
+        }
+      }
+      
+      final structureBreakLevel = entryPrice - (1.5 * latestAtr);
+      final structureIntact = lowestLowSinceEntry > structureBreakLevel;
+      
+      // Post-entry confirmation since entry
+      TradeState state;
+      String note;
+      
+      if (daysHeld < 3) {
+        state = TradeState.waitingConfirmation;
+        note = 'Day $daysHeld/3-7: Waiting confirmation';
+      } else if (!structureIntact) {
+        state = TradeState.failed;
+        note = 'Structure broken';
+      } else if (!aboveEma && daysHeld >= 7) {
+        state = TradeState.failed;
+        note = 'Failed to hold above EMA20';
+      } else if (aboveEma && structureIntact && daysHeld >= 3) {
+        state = TradeState.confirmed;
+        note = 'Confirmed ($daysHeld days)';
+      } else {
+        state = TradeState.waitingConfirmation;
+        note = 'Day $daysHeld: Monitoring';
+      }
+      
+      postEntry = PostEntryAnalysis(
+        state: state,
+        daysHeld: daysHeld,
+        structureIntact: structureIntact,
+        aboveKeyEma: aboveEma,
+        note: note,
+      );
+    }
+    
+    // === Profit Management ===
+    bool moveToBreakeven = false;
+    double? partialProfitTarget;
+    
+    
+    // === Build Equation / Notes ===
     final sb = StringBuffer();
-    if ((cutLossATR - currentATR).abs() > 0.01) {
-        sb.writeln('Entry ATR: ${cutLossATR.toStringAsFixed(2)} | Current ATR: ${currentATR.toStringAsFixed(2)}');
-    } else {
-        sb.writeln('ATR: ${currentATR.toStringAsFixed(2)}');
-    }
-    
-    sb.writeln('Cut Loss: $cutLossRefDesc (${refClose.toStringAsFixed(2)}) - ${multiplier}x ATR = ${cutLoss.toStringAsFixed(2)}');
-    
-    if (trailingStop != null) {
-        sb.writeln('Trailing: Highest Close (${highestClose.toStringAsFixed(2)}) - ${multiplier}x ATR = ${trailingStop.toStringAsFixed(2)}');
-    }
+    sb.writeln('ATR: ${latestAtr.toStringAsFixed(2)} | Min ATR: ${minAtr.toStringAsFixed(2)} | ATR at Entry: ${atrAtEntry.toStringAsFixed(2)}');
+    sb.writeln('EMA20: ${latestEma20.toStringAsFixed(2)} | EMA50: ${latestEma50.toStringAsFixed(2)}');
+    sb.writeln('ISL: $refDesc (${entryRef.toStringAsFixed(2)}) - ${stopMultiplier}x ATR(${atrAtEntry.toStringAsFixed(2)}) = ${initialStop.toStringAsFixed(2)}');
+    sb.writeln('Trailing: Highest (${highestCloseSinceEntry.toStringAsFixed(2)}) - ${trailMultiplier}x ATR(${minAtr.toStringAsFixed(2)}) = ${trailingStop.toStringAsFixed(2)}');
     
     if (postEntry != null) {
-        sb.writeln('Status: ${postEntry.note}');
+      sb.writeln('Status: ${postEntry.note}');
     }
     
-    if (moveToBreakeven) {
-        sb.writeln('💡 Move stop to breakeven (${entryPrice!.toStringAsFixed(2)})');
+    if (hasEntry && entryPrice != null) {
+      final riskAmount = (entryPrice - initialStop).abs();
+      final currentGain = priceNow - entryPrice;
+      final rMultiple = riskAmount > 0 ? currentGain / riskAmount : 0;
+      
+      // Move to breakeven if > 1R profit
+      if (rMultiple >= 1.0) {
+        moveToBreakeven = true;
+        sb.writeln('riskAmount: $riskAmount >0 and currentGain: $currentGain💡 Move stop to breakeven (${entryPrice!.toStringAsFixed(2)})');
+      }
+      
+      // Partial profit target at 2R
+      if (rMultiple < 2.0) {
+        partialProfitTarget = entryPrice + (2.0 * riskAmount);
+        sb.writeln('🎯 In order to make profit: ${partialProfitTarget.toStringAsFixed(2)} (eP(${entryPrice.toStringAsFixed(2)}) + 2R(${riskAmount.toStringAsFixed(2)}))');
+      }
     }
     
-    if (partialProfitTarget != null) {
-        sb.writeln('🎯 Partial profit target: ${partialProfitTarget.toStringAsFixed(2)} (2R)');
-    }
-    
-    if (!hasEntry && !canEnter) {
-        sb.writeln('⚠️  Entry: $entryReason');
-    } else if (!hasEntry && breakoutDetected) {
-        sb.writeln('✅ Breakout detected');
+    if (!hasEntry) {
+      if (canEnter) {
+        sb.writeln('✅ $entryReason');
+      } else {
+        sb.writeln('⚠️ $entryReason');
+      }
+      if (breakoutDetected) {
+        sb.writeln('📈 Breakout detected');
+      }
     }
     
     return StrategyResult(
-        cutLossPrice: cutLoss,
-        trailingStopPrice: trailingStop,
-        equation: sb.toString(),
-        postEntry: postEntry,
-        canEnter: canEnter,
-        entryReason: entryReason,
-        breakoutDetected: breakoutDetected,
-        moveToBreakeven: moveToBreakeven,
-        partialProfitTarget: partialProfitTarget,
+      cutLossPrice: initialStop,
+      trailingStopPrice: trailingStop,
+      equation: sb.toString(),
+      postEntry: postEntry,
+      canEnter: canEnter,
+      entryReason: entryReason,
+      breakoutDetected: breakoutDetected,
+      moveToBreakeven: moveToBreakeven,
+      partialProfitTarget: partialProfitTarget,
     );
   }
 }
@@ -297,44 +271,34 @@ class EmaStopStrategy implements StopStrategy {
 
   @override
   StrategyResult calculateStopPrice(List<Candle> candles, {DateTime? entryDate, double? entryPrice}) {
-    if (candles.length < period) return StrategyResult(cutLossPrice: 0.0, equation: 'Not enough data');
-
-    final k = 2 / (period + 1);
-    
-    double sum = 0;
-    for (int i = 0; i < period; i++) {
-      sum += candles[i].close;
+    if (candles.length < period) {
+      return StrategyResult(cutLossPrice: 0.0, equation: 'Not enough data');
     }
-    double ema = sum / period;
 
-    for (int i = period; i < candles.length; i++) {
-      ema = (candles[i].close * k) + (ema * (1 - k));
+    final closes = candles.map((c) => c.close).toList();
+    final emaSeries = Indicator.ema(closes, period);
+    final ema = emaSeries.last;
+    
+    if (ema.isNaN) {
+      return StrategyResult(cutLossPrice: 0.0, equation: 'Error calculating EMA');
     }
     
     return StrategyResult(
-        cutLossPrice: ema, 
-        trailingStopPrice: null, 
-        equation: 'Limit: ${ema.toStringAsFixed(2)}\nCalculation: EMA ($period) of Close Prices',
+      cutLossPrice: ema,
+      trailingStopPrice: null,
+      equation: 'Limit: ${ema.toStringAsFixed(2)}\nCalculation: EMA ($period) of Close Prices',
     );
   }
 
+  /// Calculate full EMA series for charting
   static List<double?> calculateValidSeries(List<Candle> candles, int period) {
-    List<double?> series = List.filled(candles.length, null);
-    if (candles.length < period) return series;
-
-    final k = 2 / (period + 1);
+    if (candles.length < period) {
+      return List.filled(candles.length, null);
+    }
     
-    double sum = 0;
-    for (int i = 0; i < period; i++) {
-        sum += candles[i].close;
-    }
-    double ema = sum / period;
-    series[period - 1] = ema;
-
-    for (int i = period; i < candles.length; i++) {
-        ema = (candles[i].close * k) + (ema * (1 - k));
-        series[i] = ema;
-    }
-    return series;
+    final closes = candles.map((c) => c.close).toList();
+    final emaSeries = Indicator.ema(closes, period);
+    
+    return emaSeries.map((v) => v.isNaN ? null : v).toList();
   }
 }

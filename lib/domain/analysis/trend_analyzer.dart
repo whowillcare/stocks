@@ -1,191 +1,344 @@
+// trend_analyzer.dart
+// Pure-Dart implementation of trend detection, scoring, structure signals
+// Ported from POC with Indicator class, calcTrendScore, and StrategyEngine
 
 import 'dart:math';
 import '../model/stock_data.dart';
 
-
-class TrendAnalysisResult {
-  final double score;
-  final String riskLevel;
-  final String trend;
-  final String details;
-  
-  // Safe Entry Analysis
-  final bool isSafeEntry;
-  final String safeEntrySignal; // "PASS" or fail reason
-  final double safeRangeLow;
-  final double safeRangeHigh;
-
-  TrendAnalysisResult({
-    required this.score,
-    required this.riskLevel,
-    required this.trend,
-    required this.details,
-    required this.isSafeEntry,
-    required this.safeEntrySignal,
-    required this.safeRangeLow,
-    required this.safeRangeHigh,
-  });
-}
-
-class TrendAnalyzer {
-  // Configurable Scores
-  double scoreFomo;          // Price > EMA20 + ATR
-  double scoreSlightlyAbove; // EMA20 < Price <= EMA20 + ATR
-  double scoreOptimal;       // Price ~= EMA20
-  double scoreFallingKnife;  // Price < EMA20
-  double scoreVolumeSpike;   // Volume Spike
-  double scoreSideways;      // Sideways Trend
-
-  TrendAnalyzer({
-    this.scoreFomo = 3.0,
-    this.scoreSlightlyAbove = 1.0,
-    this.scoreOptimal = 0.0,
-    this.scoreFallingKnife = 2.0,
-    this.scoreVolumeSpike = -1.0,
-    this.scoreSideways = 2.0,
-  });
-
-  TrendAnalysisResult analyze(List<Candle> candles, List<double?> ema20Series, List<double?> ema50Series, double atr) {
-    if (candles.isEmpty || ema20Series.isEmpty || ema20Series.last == null) {
-      return TrendAnalysisResult(score: 0, riskLevel: 'Unknown', trend: 'Unknown', details: 'Insufficient Data', isSafeEntry: false, safeEntrySignal: 'No Data', safeRangeLow: 0, safeRangeHigh: 0);
-    }
-
-    final currentPrice = candles.last.close;
-    final ema20 = ema20Series.last!;
-    final sb = StringBuffer();
-    double currentScore = 0.0;
-    
-    // --- Risk Scoring (Previous Logic) ---
-
-    // 1. Price Position vs EMA20
-    if (currentPrice > ema20 + atr) {
-      currentScore += scoreFomo;
-      sb.writeln('• Price >> EMA20 (FOMO): +$scoreFomo');
-    } else if (currentPrice > ema20) {
-      if (currentPrice <= ema20 + (0.3 * atr)) {
-         currentScore += scoreOptimal;
-         sb.writeln('• Price near EMA20: +$scoreOptimal');
+// --- Technical Indicator Helpers ---
+class Indicator {
+  /// EMA (period N) - returns list where index i corresponds to same index in closes
+  static List<double> ema(List<double> closes, int period) {
+    final n = period;
+    final alpha = 2.0 / (n + 1);
+    final out = List<double>.filled(closes.length, double.nan);
+    double? prev;
+    for (int i = 0; i < closes.length; i++) {
+      final price = closes[i];
+      if (i < n - 1) {
+        continue; // not enough points
+      } else if (i == n - 1) {
+        final sum = closes.sublist(0, n).reduce((a, b) => a + b);
+        prev = sum / n;
+        out[i] = prev;
       } else {
-         currentScore += scoreSlightlyAbove;
-         sb.writeln('• Price > EMA20: +$scoreSlightlyAbove');
+        prev = price * alpha + prev! * (1 - alpha);
+        out[i] = prev;
       }
-    } else {
-       currentScore += scoreFallingKnife;
-       sb.writeln('• Price < EMA20 (Falling Knife): +$scoreFallingKnife');
     }
+    return out;
+  }
 
-    // 2. Trend Classification
-    String trend = 'Neutral';
-    if (ema20Series.length >= 5) {
-        final prevEma = ema20Series[ema20Series.length - 5];
-        if (prevEma != null) {
-            final change = (ema20 - prevEma) / prevEma; 
-            if (change.abs() < 0.005) {
-                trend = 'Sideways';
-                currentScore += scoreSideways;
-                sb.writeln('• Sideways Trend: +$scoreSideways');
-            } else if (change > 0) {
-                trend = 'Uptrend';
-            } else {
-                trend = 'Downtrend';
-            }
-        }
+  /// True Range series from candles
+  static List<double> tr(List<Candle> bars) {
+    final t = List<double>.filled(bars.length, double.nan);
+    for (int i = 0; i < bars.length; i++) {
+      if (i == 0) {
+        t[i] = bars[i].high - bars[i].low;
+      } else {
+        final prevClose = bars[i - 1].close;
+        final a = bars[i].high - bars[i].low;
+        final b = (bars[i].high - prevClose).abs();
+        final c = (bars[i].low - prevClose).abs();
+        t[i] = max(a, max(b, c));
+      }
     }
+    return t;
+  }
 
-    // 3. Volume Spike
-    double avgVol20 = 0;
-    int count = 0;
-    for (int i = max(0, candles.length - 20); i < candles.length - 1; i++) {
-        avgVol20 += candles[i].volume;
-        count++;
+  /// ATR (Wilder smoothing style)
+  static List<double> atr(List<Candle> bars, {int period = 14}) {
+    final t = tr(bars);
+    final out = List<double>.filled(bars.length, double.nan);
+    double? prevAtr;
+    for (int i = 0; i < bars.length; i++) {
+      if (i < period - 1) continue;
+      if (i == period - 1) {
+        final sum = t.sublist(0, period).reduce((a, b) => a + b);
+        prevAtr = sum / period;
+        out[i] = prevAtr;
+      } else {
+        // Wilder smoothing
+        prevAtr = ((prevAtr! * (period - 1)) + t[i]) / period;
+        out[i] = prevAtr;
+      }
     }
-    if (count > 0) avgVol20 /= count;
-    
-    if (candles.last.volume > avgVol20 * 1.5) {
-        currentScore += scoreVolumeSpike;
-        sb.writeln('• Volume Spike: $scoreVolumeSpike');
-    }
+    return out;
+  }
 
-    // Risk Level Classification
-    String riskLevel = 'Low';
-    if (currentScore >= 4) {
-        riskLevel = 'Very High';
-    } else if (currentScore >= 2) {
-        riskLevel = 'High';
-    } else if (currentScore >= 1) {
-        riskLevel = 'Moderate';
-    } else if (currentScore <= 0) {
-        riskLevel = 'Low (Optimal)';
-    }
-    
-    // --- Safe Entry Analysis ---
-    // Safe Range: [EMA20 - 0.5*ATR, EMA20 + 0.2*ATR]
-    double safeLow = ema20 - (0.5 * atr);
-    double safeHigh = ema20 + (0.2 * atr);
-    
-    bool isSafe = true;
-    String signalReason = 'PASS';
-    
-    // Condition A: Trend Direction (Price > EMA20 > EMA50)
-    double ema50 = (ema50Series.isNotEmpty && ema50Series.last != null) ? ema50Series.last! : 0.0;
-    if (ema50 > 0) {
-        if (!(currentPrice > ema20 && ema20 > ema50)) {
-            isSafe = false;
-            signalReason = 'FAIL: No Uptrend (Price > EMA20 > EMA50)';
-        }
-    } else {
-        // If no EMA50 data yet (not enough candles), strictly fail or be lenient?
-        // Logic says "If this is not true -> No entry".
-        isSafe = false;
-        signalReason = 'FAIL: Insufficient Data for Trend';
-    }
-    
-    // Condition B: Price within Safe Range Logic
-    // "Acceptable = Safe Range ... Reject if > EMA20 + 1ATR or < EMA20 - 1ATR"
-    // Requirement says: "Price must be within the Safe Range". 
-    // BUT strictly being within [EMA20-0.5ATR, EMA20+0.2ATR] is the "Safe Range".
-    // The "Reject if" implies a wider tolerance for rejection, but "Acceptable" is the specific range.
-    // Let's stick to the "Safe Range" definition for "Optimal" entry.
-    // If requirement means ONLY enter if within that strict range, then use that.
-    // "Acceptable = Safe Range ... Reject if ..." implies:
-    // Ideally inside Safe Range. If outside, definitely reject if > +1ATR or < -1ATR. 
-    // What if it's between +0.2ATR and +1ATR? It says "Not too stretched".
-    // I will enforce the strict "Safe Range" as the condition for "Safe Entry" for now as per "Price must be within the 'Safe Range'".
-    
-    if (isSafe) {
-        if (currentPrice > safeHigh) {
-            isSafe = false;
-            signalReason = 'FAIL: Price above Safe Range';
-        } else if (currentPrice < safeLow) {
-             isSafe = false;
-            signalReason = 'FAIL: Price below Safe Range';
-        }
-    }
-    
-    // Condition C: Volume not dropping
-    // "If live volume is < 40% of expected daily volume by midday -> avoid"
-    // "Midday" is hard to check without time context relative to market open.
-    // Simple check: Is current volume > 40% of AvgVol20?
-    // Note: AvgVol20 is daily average. Current candle might be "today" so far.
-    // If it's early morning, volume will be low naturally.
-    // Let's just implement the check as requested: Volume > 0.4 * AvgVol20
-    if (isSafe) {
-        if (candles.last.volume < avgVol20 * 0.4) {
-             isSafe = false;
-             signalReason = 'FAIL: Weak Volume (< 40% Avg)';
-        }
-    }
+  /// Highest close in lookback window ending at idx (inclusive)
+  static double rollingHighestClose(List<double> closes, int idx, int lookback) {
+    final start = max(0, idx - (lookback - 1));
+    double hi = double.negativeInfinity;
+    for (int i = start; i <= idx; i++) hi = max(hi, closes[i]);
+    return hi.isFinite ? hi : double.nan;
+  }
 
-    return TrendAnalysisResult(
-        score: currentScore,
-        riskLevel: riskLevel,
-        trend: trend,
-        details: sb.toString().trim(),
-        isSafeEntry: isSafe,
-        safeEntrySignal: signalReason,
-        safeRangeLow: safeLow,
-        safeRangeHigh: safeHigh,
-    );
+  /// Rolling average volume
+  static double rollingAvgVolume(List<double> vols, int idx, int lookback) {
+    final start = max(0, idx - (lookback - 1));
+    double sum = 0;
+    int cnt = 0;
+    for (int i = start; i <= idx; i++) {
+      sum += vols[i];
+      cnt++;
+    }
+    return cnt > 0 ? sum / cnt : double.nan;
   }
 }
 
+// --- Swing Point Detection ---
+List<int> _localPeaks(List<double> arr) {
+  final idx = <int>[];
+  for (int i = 1; i < arr.length - 1; i++) {
+    if (arr[i] > arr[i - 1] && arr[i] > arr[i + 1]) idx.add(i);
+  }
+  return idx;
+}
+
+List<int> _localTroughs(List<double> arr) {
+  final idx = <int>[];
+  for (int i = 1; i < arr.length - 1; i++) {
+    if (arr[i] < arr[i - 1] && arr[i] < arr[i + 1]) idx.add(i);
+  }
+  return idx;
+}
+
+/// Check HH/HL/LH/LL structure signals over last lookback days
+Map<String, bool> structureSignals(List<Candle> bars, {int lookback = 14}) {
+  if (bars.length < 5) return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
+  final sliceStart = max(0, bars.length - lookback);
+  final sub = bars.sublist(sliceStart);
+  final highs = sub.map((b) => b.high).toList();
+  final lows = sub.map((b) => b.low).toList();
+  final pk = _localPeaks(highs).map((i) => i + sliceStart).toList();
+  final tr = _localTroughs(lows).map((i) => i + sliceStart).toList();
+  
+  bool hh = false, hl = false, lh = false, ll = false;
+  
+  if (pk.length >= 2) {
+    // last two peaks increasing?
+    final last = pk._takeLast(3);
+    bool peaksUp = true;
+    for (int i = 1; i < last.length; i++) {
+      if (bars[last[i]].high <= bars[last[i - 1]].high) peaksUp = false;
+    }
+    if (peaksUp) hh = true;
+    
+    bool peaksDown = true;
+    for (int i = 1; i < last.length; i++) {
+      if (bars[last[i]].high >= bars[last[i - 1]].high) peaksDown = false;
+    }
+    if (peaksDown) lh = true;
+  }
+  
+  if (tr.length >= 2) {
+    final last = tr._takeLast(3);
+    bool troughsUp = true;
+    for (int i = 1; i < last.length; i++) {
+      if (bars[last[i]].low <= bars[last[i - 1]].low) troughsUp = false;
+    }
+    if (troughsUp) hl = true;
+    
+    bool troughsDown = true;
+    for (int i = 1; i < last.length; i++) {
+      if (bars[last[i]].low >= bars[last[i - 1]].low) troughsDown = false;
+    }
+    if (troughsDown) ll = true;
+  }
+  
+  return {'HH': hh, 'HL': hl, 'LH': lh, 'LL': ll};
+}
+
+extension _TakeLast<E> on List<E> {
+  List<E> _takeLast(int n) => sublist(max(0, length - n));
+}
+
+/// Calculate TrendScore (balanced: positive = uptrend signals, negative = downtrend)
+int calcTrendScore(List<Candle> bars, {int lookback = 14}) {
+  final closes = bars.map((b) => b.close).toList();
+  final sig = structureSignals(bars, lookback: lookback);
+  int score = 0;
+  
+  if (sig['HH'] == true) score += 1;
+  if (sig['HL'] == true) score += 1;
+  if (sig['LH'] == true) score -= 1;
+  if (sig['LL'] == true) score -= 1;
+  
+  // EMA confirmations (20,50)
+  final ema20 = Indicator.ema(closes, 20);
+  final ema50 = Indicator.ema(closes, 50);
+  final last = closes.length - 1;
+  
+  if (!ema20[last].isNaN && !ema50[last].isNaN) {
+    if (closes[last] > ema20[last]) score += 1;
+    else score -= 1;
+    
+    if (ema20[last] > ema50[last]) score += 1;
+    else score -= 1;
+    
+    // slope check (ema20 slope over 3 periods)
+    final prevIdx = max(0, last - 3);
+    if (!ema20[prevIdx].isNaN && !ema20[last].isNaN) {
+      if (ema20[last] > ema20[prevIdx]) score += 1;
+      else score -= 1;
+    }
+  }
+  
+  return score;
+}
+
+// --- Analysis Result ---
+class TrendAnalysisResult {
+  final int trendScore;
+  final String trend;      // 'uptrend' | 'downtrend' | 'sideways'
+  final double atr;
+  final double ema20;
+  final double ema50;
+  final double entryMin;   // safe entry low (EMA20 - 0.5*ATR)
+  final double entryMax;   // safe entry high (EMA20 + 0.2*ATR)
+  final String entryAdvice;
+  final bool volumeConfirm;
+  final bool breakoutDetected;
+  final Map<String, bool> structure; // {HH, HL, LH, LL}
+  final List<String> notes;
+  
+  TrendAnalysisResult({
+    required this.trendScore,
+    required this.trend,
+    required this.atr,
+    required this.ema20,
+    required this.ema50,
+    required this.entryMin,
+    required this.entryMax,
+    required this.entryAdvice,
+    required this.volumeConfirm,
+    required this.breakoutDetected,
+    required this.structure,
+    required this.notes,
+  });
+  
+  /// Convenience: is safe entry based on trend and position
+  bool get isSafeEntry => entryAdvice.contains('Good') || entryAdvice.contains('good');
+}
+
+// --- Trend Analyzer ---
+class TrendAnalyzer {
+  final int atrPeriod;
+  final double entryAtrFactor;  // 0.5 = EMA20 - 0.5*ATR
+  final double entryUpperFactor; // 0.2 = EMA20 + 0.2*ATR
+  final int breakoutLookback;
+  final int volLookback;
+  
+  TrendAnalyzer({
+    this.atrPeriod = 14,
+    this.entryAtrFactor = 0.5,
+    this.entryUpperFactor = 0.2,
+    this.breakoutLookback = 20,
+    this.volLookback = 20,
+  });
+  
+  TrendAnalysisResult analyze(List<Candle> candles) {
+    if (candles.isEmpty || candles.length < atrPeriod + 1) {
+      return TrendAnalysisResult(
+        trendScore: 0,
+        trend: 'unknown',
+        atr: 0,
+        ema20: 0,
+        ema50: 0,
+        entryMin: 0,
+        entryMax: 0,
+        entryAdvice: 'Insufficient data',
+        volumeConfirm: false,
+        breakoutDetected: false,
+        structure: {'HH': false, 'HL': false, 'LH': false, 'LL': false},
+        notes: ['Not enough data to analyze'],
+      );
+    }
+    
+    final closes = candles.map((b) => b.close).toList();
+    final volumes = candles.map((b) => b.volume.toDouble()).toList();
+    final atrSeries = Indicator.atr(candles, period: atrPeriod);
+    final ema20 = Indicator.ema(closes, 20);
+    final ema50 = Indicator.ema(closes, 50);
+    final last = candles.length - 1;
+    
+    final latestAtr = atrSeries[last];
+    final latestEma20 = ema20[last];
+    final latestEma50 = ema50[last];
+    
+    // Calculate trend score
+    final ts = calcTrendScore(candles);
+    
+    // Structure signals
+    final structureSig = structureSignals(candles);
+    
+    // Safe entry range
+    final entryMin = latestEma20 - entryAtrFactor * latestAtr;
+    final entryMax = latestEma20 + entryUpperFactor * latestAtr;
+    
+    final priceNow = closes[last];
+    
+    // Volume check
+    final vol20 = Indicator.rollingAvgVolume(volumes, last, volLookback);
+    final volConfirm = volumes[last] >= vol20 * 1.2;
+    
+    // Breakout check
+    final prevHigh = Indicator.rollingHighestClose(closes, last - 1, breakoutLookback);
+    bool breakout = !prevHigh.isNaN && priceNow > prevHigh;
+    
+    // Entry decision
+    String entryAdvice = 'No opinion';
+    if (ts >= 3 && priceNow >= entryMin && priceNow <= entryMax && volConfirm) {
+      entryAdvice = 'Good entry zone';
+    } else if (ts >= 2 && priceNow <= entryMin) {
+      entryAdvice = 'Potential dip; entry with smaller size';
+    } else if (ts < 1) {
+      entryAdvice = 'Avoid entry: weak trend';
+    } else if (!volConfirm) {
+      entryAdvice = 'Caution: volume below average';
+    } else if (priceNow > entryMax) {
+      entryAdvice = 'Wait or small position (chasing)';
+    } else {
+      entryAdvice = 'Wait or small position';
+    }
+    
+    // Trend classification
+    String trend;
+    if (ts >= 3) {
+      trend = 'uptrend';
+    } else if (ts <= -3) {
+      trend = 'downtrend';
+    } else {
+      trend = 'sideways';
+    }
+    
+    // Build notes
+    final notes = <String>[];
+    notes.add('ATR=${latestAtr.toStringAsFixed(2)}, EMA20=${latestEma20.toStringAsFixed(2)}, EMA50=${latestEma50.toStringAsFixed(2)}');
+    notes.add('TrendScore=$ts, breakout=${breakout ? 'yes' : 'no'}, volConfirm=${volConfirm ? 'yes' : 'no'}');
+    
+    final structStr = [
+      if (structureSig['HH'] == true) 'HH',
+      if (structureSig['HL'] == true) 'HL',
+      if (structureSig['LH'] == true) 'LH',
+      if (structureSig['LL'] == true) 'LL',
+    ].join('+');
+    if (structStr.isNotEmpty) notes.add('Structure: $structStr');
+    
+    return TrendAnalysisResult(
+      trendScore: ts,
+      trend: trend,
+      atr: latestAtr,
+      ema20: latestEma20,
+      ema50: latestEma50,
+      entryMin: entryMin,
+      entryMax: entryMax,
+      entryAdvice: entryAdvice,
+      volumeConfirm: volConfirm,
+      breakoutDetected: breakout,
+      structure: structureSig,
+      notes: notes,
+    );
+  }
+}

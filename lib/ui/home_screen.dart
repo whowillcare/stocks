@@ -62,7 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       
                       // Add Button with Long Press History
                       GestureDetector(
-                          onLongPressStart: (details) {
+                          onDoubleTap: (details) {
                               _showHistoryMenu(context, details.globalPosition, provider);
                           },
                           child: IconButton(
@@ -130,7 +130,8 @@ class _HomeScreenState extends State<HomeScreen> {
           context: context,
           builder: (context) {
               int tempAtrPeriod = provider.atrPeriod;
-              double tempAtrMult = provider.atrMultiplier;
+              double tempStopMult = provider.atrMultiplier;
+              double tempTrailMult = provider.trailMultiplier;
               int tempEmaPeriod = provider.emaPeriod;
               
               return StatefulBuilder(
@@ -148,10 +149,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                       onChanged: (v) => tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
                                   ),
                                   TextField(
-                                      decoration: const InputDecoration(labelText: 'Multiplier'),
+                                      decoration: const InputDecoration(labelText: 'Stop Loss Multiplier (ISL)'),
                                       keyboardType: TextInputType.number,
-                                      controller: TextEditingController(text: tempAtrMult.toString()),
-                                      onChanged: (v) => tempAtrMult = double.tryParse(v) ?? tempAtrMult,
+                                      controller: TextEditingController(text: tempStopMult.toString()),
+                                      onChanged: (v) => tempStopMult = double.tryParse(v) ?? tempStopMult,
+                                  ),
+                                  TextField(
+                                      decoration: const InputDecoration(labelText: 'Trailing Stop Multiplier'),
+                                      keyboardType: TextInputType.number,
+                                      controller: TextEditingController(text: tempTrailMult.toString()),
+                                      onChanged: (v) => tempTrailMult = double.tryParse(v) ?? tempTrailMult,
                                   ),
                                   const SizedBox(height: 16),
                                   const Text('EMA Strategy', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -167,7 +174,11 @@ class _HomeScreenState extends State<HomeScreen> {
                               TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
                               TextButton(
                                   onPressed: () {
-                                      provider.updateGlobalAtrParams(period: tempAtrPeriod, multiplier: tempAtrMult);
+                                      provider.updateGlobalAtrParams(
+                                          period: tempAtrPeriod, 
+                                          multiplier: tempStopMult,
+                                          trailMultiplier: tempTrailMult,
+                                      );
                                       provider.updateGlobalEmaParams(period: tempEmaPeriod);
                                       Navigator.pop(context);
                                   }, 
@@ -389,12 +400,16 @@ class _SessionViewState extends State<_SessionView> {
                   ExpansionTile(
                       tilePadding: EdgeInsets.zero,
                       title: Text(
-                          '${session.trendAnalysis!.trend} • ${session.trendAnalysis!.riskLevel}',
+                          '${session.trendAnalysis!.trend} • Score: ${session.trendAnalysis!.trendScore}',
                           style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
                               color: _getTrendColor(session.trendAnalysis!.trend),
                           ),
+                      ),
+                      subtitle: Text(
+                          session.trendAnalysis!.entryAdvice,
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       children: [
                           Padding(
@@ -406,7 +421,7 @@ class _SessionViewState extends State<_SessionView> {
                                       borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Text(
-                                      session.trendAnalysis!.details,
+                                      session.trendAnalysis!.notes.join('\n'),
                                       style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                                   ),
                               ),

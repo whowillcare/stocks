@@ -24,19 +24,12 @@ class HomeProvider extends ChangeNotifier {
 
   // Global Strategy Settings
   int atrPeriod = 14;
-  double atrMultiplier = 3.0;
+  double atrMultiplier = 3.0;  // ISL multiplier
+  double trailMultiplier = 3.0; // Trailing stop multiplier
   int emaPeriod = 20;
 
   // Chart Settings
   int visibleDays = 90;
-
-  // Trend Analysis Settings (Scores)
-  double scoreFomo = 3.0;
-  double scoreSlightlyAbove = 1.0;
-  double scoreOptimal = 0.0;
-  double scoreFallingKnife = 2.0;
-  double scoreVolumeSpike = -1.0;
-  double scoreSideways = 2.0;
 
   // Search History
   List<String> _searchHistory = [];
@@ -50,14 +43,7 @@ class HomeProvider extends ChangeNotifier {
     atrMultiplier = prefs.getDouble('atrMultiplier') ?? 3.0;
     emaPeriod = prefs.getInt('emaPeriod') ?? 20;
     visibleDays = prefs.getInt('visibleDays') ?? 90;
-    
-    // Load Trend Settings
-    scoreFomo = prefs.getDouble('scoreFomo') ?? 3.0;
-    scoreSlightlyAbove = prefs.getDouble('scoreSlightlyAbove') ?? 1.0;
-    scoreOptimal = prefs.getDouble('scoreOptimal') ?? 0.0;
-    scoreFallingKnife = prefs.getDouble('scoreFallingKnife') ?? 2.0;
-    scoreVolumeSpike = prefs.getDouble('scoreVolumeSpike') ?? -1.0;
-    scoreSideways = prefs.getDouble('scoreSideways') ?? 2.0;
+    trailMultiplier = prefs.getDouble('trailMultiplier') ?? 3.0;
     
     // Load History
     final history = prefs.getStringList('searchHistory');
@@ -102,16 +88,9 @@ class HomeProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('atrPeriod', atrPeriod);
     await prefs.setDouble('atrMultiplier', atrMultiplier);
+    await prefs.setDouble('trailMultiplier', trailMultiplier);
     await prefs.setInt('emaPeriod', emaPeriod);
     await prefs.setInt('visibleDays', visibleDays);
-    
-    await prefs.setDouble('scoreFomo', scoreFomo);
-    await prefs.setDouble('scoreSlightlyAbove', scoreSlightlyAbove);
-    await prefs.setDouble('scoreOptimal', scoreOptimal);
-    await prefs.setDouble('scoreFallingKnife', scoreFallingKnife);
-    await prefs.setDouble('scoreVolumeSpike', scoreVolumeSpike);
-    await prefs.setDouble('scoreSideways', scoreSideways);
-    
     await prefs.setStringList('searchHistory', _searchHistory);
   }
 
@@ -172,9 +151,10 @@ class HomeProvider extends ChangeNotifier {
       notifyListeners();
   }
 
-  void updateGlobalAtrParams({int? period, double? multiplier}) {
+  void updateGlobalAtrParams({int? period, double? multiplier, double? trailMultiplier}) {
     if (period != null) atrPeriod = period;
     if (multiplier != null) atrMultiplier = multiplier;
+    if (trailMultiplier != null) this.trailMultiplier = trailMultiplier;
     _recalculateAllStops();
     saveGlobalSettings();
     notifyListeners();
@@ -255,7 +235,11 @@ class HomeProvider extends ChangeNotifier {
     
     StopStrategy strategy;
     if (session.selectedStrategyIndex == 0) {
-      strategy = AtrStopStrategy(period: atrPeriod, multiplier: atrMultiplier);
+      strategy = AtrStopStrategy(
+        period: atrPeriod, 
+        stopMultiplier: atrMultiplier,
+        trailMultiplier: trailMultiplier,
+      );
     } else {
       strategy = EmaStopStrategy(period: emaPeriod);
     }
@@ -265,60 +249,19 @@ class HomeProvider extends ChangeNotifier {
     session.trailingStopPrice = result.trailingStopPrice;
     session.equation = result.equation;
     
-    // Calculate Trend/Risk
+    // Calculate Trend/Risk using new simplified TrendAnalyzer
     final candles = session.stockQuote!.candles;
-    
-    // Helper helper:
-    final ema20Series = EmaStopStrategy.calculateValidSeries(candles, 20); 
-    final ema50Series = EmaStopStrategy.calculateValidSeries(candles, 50);
-
-    // Calculate ATR manually here or expose from Strategy? 
-    double atr = 0.0;
-    if (candles.length > atrPeriod) {
-         // This is a bit expensive to re-calc always. 
-         // Optimize later. For now duplicate logic from AtrStopStrategy broadly.
-         // Actually, let's just create instance and use a public method if available? No public method.
-         // Let's add a static method to AtrStopStrategy or just inline.
-         
-         List<double> trs = [];
-         for (int i = candles.length - atrPeriod - 1; i < candles.length; i++) {
-             if (i <= 0) continue;
-             final current = candles[i];
-             final prev = candles[i-1];
-             final tr = max(current.high - current.low, max((current.high - prev.close).abs(), (current.low - prev.close).abs()));
-             trs.add(tr);
-         }
-         if (trs.isNotEmpty) {
-             atr = trs.reduce((a, b) => a + b) / trs.length;
-         }
-    }
-    
-    final analyzer = TrendAnalyzer(
-        scoreFomo: scoreFomo,
-        scoreSlightlyAbove: scoreSlightlyAbove,
-        scoreOptimal: scoreOptimal,
-        scoreFallingKnife: scoreFallingKnife,
-        scoreVolumeSpike: scoreVolumeSpike,
-        scoreSideways: scoreSideways,
-    );
-    
-    session.trendAnalysis = analyzer.analyze(candles, ema20Series, ema50Series, atr);
+    final analyzer = TrendAnalyzer(atrPeriod: atrPeriod);
+    session.trendAnalysis = analyzer.analyze(candles);
   }
-
   void updateTrendParams({
-      double? fomo, 
-      double? slightlyAbove, 
-      double? optimal, 
-      double? fallingKnife, 
-      double? volumeSpike, 
-      double? sideways
+      int? atrPeriod,
+      double? stopMult, 
+      double? trailMult,
   }) {
-      if (fomo != null) scoreFomo = fomo;
-      if (slightlyAbove != null) scoreSlightlyAbove = slightlyAbove;
-      if (optimal != null) scoreOptimal = optimal;
-      if (fallingKnife != null) scoreFallingKnife = fallingKnife;
-      if (volumeSpike != null) scoreVolumeSpike = volumeSpike;
-      if (sideways != null) scoreSideways = sideways;
+      if (atrPeriod != null) this.atrPeriod = atrPeriod;
+      if (stopMult != null) atrMultiplier = stopMult;
+      if (trailMult != null) trailMultiplier = trailMult;
       
       _recalculateAllStops();
       saveGlobalSettings();
