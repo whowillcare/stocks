@@ -103,10 +103,7 @@ class AtrStopStrategy implements StopStrategy {
     final atrAtEntry = hasEntry && entryIndex >= period
         ? atrSeries[entryIndex]
         : latestAtr;
-    final minAtr = Indicator.ema(
-      atrSeries,
-      period,
-    ).fold<double>(latestAtr, (min, v) => (v < min) ? v : min);
+    final minAtr = min(atrAtEntry, latestAtr);
     final initialStop =
         entryRef - stopMultiplier * (atrAtEntry.isNaN ? latestAtr : atrAtEntry);
 
@@ -116,7 +113,7 @@ class AtrStopStrategy implements StopStrategy {
     if (hasEntry && entryIndex >= 0) {
       for (int i = entryIndex; i <= last; i++) {
         highestCloseSinceEntry = max(highestCloseSinceEntry, closes[i]);
-        highestCloseDesc = 'Close at ${candles[i].date}';
+        highestCloseDesc = '@[${candles[i].dateStr}]';
       }
     } else {
       // Use rolling 60-day highest

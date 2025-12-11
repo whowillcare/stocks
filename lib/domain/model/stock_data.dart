@@ -1,3 +1,5 @@
+import 'package:intl/intl.dart';
+
 class Candle {
   final int date; // Unix timestamp
   final double open;
@@ -41,6 +43,11 @@ class Candle {
   String toString() {
     return 'date: $date, open: $open, high: $high, low: $low, close: $close, volume: $volume';
   }
+
+  DateTime get dateTime => DateTime.fromMillisecondsSinceEpoch(date * 1000);
+
+  static DateFormat dateFormat = DateFormat('yyyy-MM-dd');
+  String get dateStr => dateFormat.format(dateTime);
 }
 
 class StockQuote {
