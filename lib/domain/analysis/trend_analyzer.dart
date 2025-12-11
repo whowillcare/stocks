@@ -67,10 +67,16 @@ class Indicator {
   }
 
   /// Highest close in lookback window ending at idx (inclusive)
-  static double rollingHighestClose(List<double> closes, int idx, int lookback) {
+  static double rollingHighestClose(
+    List<double> closes,
+    int idx,
+    int lookback,
+  ) {
     final start = max(0, idx - (lookback - 1));
     double hi = double.negativeInfinity;
-    for (int i = start; i <= idx; i++) hi = max(hi, closes[i]);
+    for (int i = start; i <= idx; i++) {
+      hi = max(hi, closes[i]);
+    }
     return hi.isFinite ? hi : double.nan;
   }
 
@@ -106,16 +112,17 @@ List<int> _localTroughs(List<double> arr) {
 
 /// Check HH/HL/LH/LL structure signals over last lookback days
 Map<String, bool> structureSignals(List<Candle> bars, {int lookback = 14}) {
-  if (bars.length < 5) return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
+  if (bars.length < 5)
+    return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
   final sliceStart = max(0, bars.length - lookback);
   final sub = bars.sublist(sliceStart);
   final highs = sub.map((b) => b.high).toList();
   final lows = sub.map((b) => b.low).toList();
   final pk = _localPeaks(highs).map((i) => i + sliceStart).toList();
   final tr = _localTroughs(lows).map((i) => i + sliceStart).toList();
-  
+
   bool hh = false, hl = false, lh = false, ll = false;
-  
+
   if (pk.length >= 2) {
     // last two peaks increasing?
     final last = pk._takeLast(3);
@@ -124,14 +131,14 @@ Map<String, bool> structureSignals(List<Candle> bars, {int lookback = 14}) {
       if (bars[last[i]].high <= bars[last[i - 1]].high) peaksUp = false;
     }
     if (peaksUp) hh = true;
-    
+
     bool peaksDown = true;
     for (int i = 1; i < last.length; i++) {
       if (bars[last[i]].high >= bars[last[i - 1]].high) peaksDown = false;
     }
     if (peaksDown) lh = true;
   }
-  
+
   if (tr.length >= 2) {
     final last = tr._takeLast(3);
     bool troughsUp = true;
@@ -139,14 +146,14 @@ Map<String, bool> structureSignals(List<Candle> bars, {int lookback = 14}) {
       if (bars[last[i]].low <= bars[last[i - 1]].low) troughsUp = false;
     }
     if (troughsUp) hl = true;
-    
+
     bool troughsDown = true;
     for (int i = 1; i < last.length; i++) {
       if (bars[last[i]].low >= bars[last[i - 1]].low) troughsDown = false;
     }
     if (troughsDown) ll = true;
   }
-  
+
   return {'HH': hh, 'HL': hl, 'LH': lh, 'LL': ll};
 }
 
@@ -159,50 +166,59 @@ int calcTrendScore(List<Candle> bars, {int lookback = 14}) {
   final closes = bars.map((b) => b.close).toList();
   final sig = structureSignals(bars, lookback: lookback);
   int score = 0;
-  
+
   if (sig['HH'] == true) score += 1;
   if (sig['HL'] == true) score += 1;
   if (sig['LH'] == true) score -= 1;
   if (sig['LL'] == true) score -= 1;
-  
+
   // EMA confirmations (20,50)
   final ema20 = Indicator.ema(closes, 20);
   final ema50 = Indicator.ema(closes, 50);
   final last = closes.length - 1;
-  
+
   if (!ema20[last].isNaN && !ema50[last].isNaN) {
-    if (closes[last] > ema20[last]) score += 1;
-    else score -= 1;
-    
-    if (ema20[last] > ema50[last]) score += 1;
-    else score -= 1;
-    
+    if (closes[last] > ema20[last]) {
+      score += 1;
+    } else {
+      score -= 1;
+    }
+
+    if (ema20[last] > ema50[last]) {
+      score += 1;
+    } else {
+      score -= 1;
+    }
+
     // slope check (ema20 slope over 3 periods)
     final prevIdx = max(0, last - 3);
     if (!ema20[prevIdx].isNaN && !ema20[last].isNaN) {
-      if (ema20[last] > ema20[prevIdx]) score += 1;
-      else score -= 1;
+      if (ema20[last] > ema20[prevIdx]) {
+        score += 1;
+      } else {
+        score -= 1;
+      }
     }
   }
-  
+
   return score;
 }
 
 // --- Analysis Result ---
 class TrendAnalysisResult {
   final int trendScore;
-  final String trend;      // 'uptrend' | 'downtrend' | 'sideways'
+  final String trend; // 'uptrend' | 'downtrend' | 'sideways'
   final double atr;
   final double ema20;
   final double ema50;
-  final double entryMin;   // safe entry low (EMA20 - 0.5*ATR)
-  final double entryMax;   // safe entry high (EMA20 + 0.2*ATR)
+  final double entryMin; // safe entry low (EMA20 - 0.5*ATR)
+  final double entryMax; // safe entry high (EMA20 + 0.2*ATR)
   final String entryAdvice;
   final bool volumeConfirm;
   final bool breakoutDetected;
   final Map<String, bool> structure; // {HH, HL, LH, LL}
   final List<String> notes;
-  
+
   TrendAnalysisResult({
     required this.trendScore,
     required this.trend,
@@ -217,19 +233,20 @@ class TrendAnalysisResult {
     required this.structure,
     required this.notes,
   });
-  
+
   /// Convenience: is safe entry based on trend and position
-  bool get isSafeEntry => entryAdvice.contains('Good') || entryAdvice.contains('good');
+  bool get isSafeEntry =>
+      entryAdvice.contains('Good') || entryAdvice.contains('good');
 }
 
 // --- Trend Analyzer ---
 class TrendAnalyzer {
   final int atrPeriod;
-  final double entryAtrFactor;  // 0.5 = EMA20 - 0.5*ATR
+  final double entryAtrFactor; // 0.5 = EMA20 - 0.5*ATR
   final double entryUpperFactor; // 0.2 = EMA20 + 0.2*ATR
   final int breakoutLookback;
   final int volLookback;
-  
+
   TrendAnalyzer({
     this.atrPeriod = 14,
     this.entryAtrFactor = 0.5,
@@ -237,7 +254,7 @@ class TrendAnalyzer {
     this.breakoutLookback = 20,
     this.volLookback = 20,
   });
-  
+
   TrendAnalysisResult analyze(List<Candle> candles) {
     if (candles.isEmpty || candles.length < atrPeriod + 1) {
       return TrendAnalysisResult(
@@ -255,38 +272,42 @@ class TrendAnalyzer {
         notes: ['Not enough data to analyze'],
       );
     }
-    
+
     final closes = candles.map((b) => b.close).toList();
     final volumes = candles.map((b) => b.volume.toDouble()).toList();
     final atrSeries = Indicator.atr(candles, period: atrPeriod);
     final ema20 = Indicator.ema(closes, 20);
     final ema50 = Indicator.ema(closes, 50);
     final last = candles.length - 1;
-    
+
     final latestAtr = atrSeries[last];
     final latestEma20 = ema20[last];
     final latestEma50 = ema50[last];
-    
+
     // Calculate trend score
     final ts = calcTrendScore(candles);
-    
+
     // Structure signals
     final structureSig = structureSignals(candles);
-    
+
     // Safe entry range
     final entryMin = latestEma20 - entryAtrFactor * latestAtr;
     final entryMax = latestEma20 + entryUpperFactor * latestAtr;
-    
+
     final priceNow = closes[last];
-    
+
     // Volume check
     final vol20 = Indicator.rollingAvgVolume(volumes, last, volLookback);
     final volConfirm = volumes[last] >= vol20 * 1.2;
-    
+
     // Breakout check
-    final prevHigh = Indicator.rollingHighestClose(closes, last - 1, breakoutLookback);
+    final prevHigh = Indicator.rollingHighestClose(
+      closes,
+      last - 1,
+      breakoutLookback,
+    );
     bool breakout = !prevHigh.isNaN && priceNow > prevHigh;
-    
+
     // Entry decision
     String entryAdvice = 'No opinion';
     if (ts >= 3 && priceNow >= entryMin && priceNow <= entryMax && volConfirm) {
@@ -302,7 +323,7 @@ class TrendAnalyzer {
     } else {
       entryAdvice = 'Wait or small position';
     }
-    
+
     // Trend classification
     String trend;
     if (ts >= 3) {
@@ -312,12 +333,16 @@ class TrendAnalyzer {
     } else {
       trend = 'sideways';
     }
-    
+
     // Build notes
     final notes = <String>[];
-    notes.add('ATR=${latestAtr.toStringAsFixed(2)}, EMA20=${latestEma20.toStringAsFixed(2)}, EMA50=${latestEma50.toStringAsFixed(2)}');
-    notes.add('TrendScore=$ts, breakout=${breakout ? 'yes' : 'no'}, volConfirm=${volConfirm ? 'yes' : 'no'}');
-    
+    notes.add(
+      'ATR=${latestAtr.toStringAsFixed(2)}, EMA20=${latestEma20.toStringAsFixed(2)}, EMA50=${latestEma50.toStringAsFixed(2)}',
+    );
+    notes.add(
+      'TrendScore=$ts, breakout=${breakout ? 'yes' : 'no'}, volConfirm=${volConfirm ? 'yes' : 'no'}',
+    );
+
     final structStr = [
       if (structureSig['HH'] == true) 'HH',
       if (structureSig['HL'] == true) 'HL',
@@ -325,7 +350,7 @@ class TrendAnalyzer {
       if (structureSig['LL'] == true) 'LL',
     ].join('+');
     if (structStr.isNotEmpty) notes.add('Structure: $structStr');
-    
+
     return TrendAnalysisResult(
       trendScore: ts,
       trend: trend,

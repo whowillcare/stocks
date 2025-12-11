@@ -22,7 +22,8 @@ class AnalysisResult {
   final String entryAdvice;
   final double suggestedEntry;
   final double initialStop; // ISL (entry - k * ATR)
-  final double trailingStop; // current tractioned trailing stop (never decreases)
+  final double
+  trailingStop; // current tractioned trailing stop (never decreases)
   final double highestCloseSinceEntry;
   final List<String> notes;
   AnalysisResult({
@@ -104,10 +105,16 @@ class Indicator {
     return out;
   }
 
-  static double rollingHighestClose(List<double> closes, int idx, int lookback) {
+  static double rollingHighestClose(
+    List<double> closes,
+    int idx,
+    int lookback,
+  ) {
     final start = max(0, idx - (lookback - 1));
     double hi = double.negativeInfinity;
-    for (int i = start; i <= idx; i++) hi = max(hi, closes[i]);
+    for (int i = start; i <= idx; i++) {
+      hi = max(hi, closes[i]);
+    }
     return hi.isFinite ? hi : double.nan;
   }
 
@@ -131,6 +138,7 @@ List<int> localPeaks(List<double> arr) {
   }
   return idx;
 }
+
 List<int> localTroughs(List<double> arr) {
   final idx = <int>[];
   for (int i = 1; i < arr.length - 1; i++) {
@@ -141,7 +149,8 @@ List<int> localTroughs(List<double> arr) {
 
 // Check HH/HL/LH/LL over last lookback days
 Map<String, bool> structureSignals(List<OHLCV> bars, {int lookback = 14}) {
-  if (bars.length < 5) return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
+  if (bars.length < 5)
+    return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
   final sliceStart = max(0, bars.length - lookback);
   final sub = bars.sublist(sliceStart);
   final highs = sub.map((b) => b.high).toList();
@@ -197,15 +206,24 @@ int calcTrendScore(List<OHLCV> bars, {int lookback = 14}) {
   final ema50 = Indicator.ema(closes, 50);
   final last = closes.length - 1;
   if (!ema20[last].isNaN && !ema50[last].isNaN) {
-    if (closes[last] > ema20[last]) score += 1;
-    else score -= 1;
-    if (ema20[last] > ema50[last]) score += 1;
-    else score -= 1;
+    if (closes[last] > ema20[last]) {
+      score += 1;
+    } else {
+      score -= 1;
+    }
+    if (ema20[last] > ema50[last]) {
+      score += 1;
+    } else {
+      score -= 1;
+    }
     // slope check (ema20 slope over 3 periods)
     final prevIdx = max(0, last - 3);
     if (!ema20[prevIdx].isNaN && !ema20[last].isNaN) {
-      if (ema20[last] > ema20[prevIdx]) score += 1;
-      else score -= 1;
+      if (ema20[last] > ema20[prevIdx]) {
+        score += 1;
+      } else {
+        score -= 1;
+      }
     }
   }
   return score;
@@ -270,7 +288,11 @@ class StrategyEngine {
     // suggested entry default
     double suggestedEntry = priceNow;
     // breakout check
-    final prevHigh = Indicator.rollingHighestClose(closes, last - 1, breakoutLookback);
+    final prevHigh = Indicator.rollingHighestClose(
+      closes,
+      last - 1,
+      breakoutLookback,
+    );
     bool breakout = false;
     if (!prevHigh.isNaN && priceNow > prevHigh) {
       breakout = true;
@@ -290,17 +312,30 @@ class StrategyEngine {
 
     // notes
     final notes = <String>[];
-    notes.add('ATR=${latestAtr.toStringAsFixed(4)}, EMA20=${latestEma20.toStringAsFixed(2)}, EMA50=${latestEma50.toStringAsFixed(2)}');
-    notes.add('TrendScore=$ts, breakout=${breakout ? 'yes' : 'no'}, volConfirm=${volConfirm ? 'yes' : 'no'}');
+    notes.add(
+      'ATR=${latestAtr.toStringAsFixed(4)}, EMA20=${latestEma20.toStringAsFixed(2)}, EMA50=${latestEma50.toStringAsFixed(2)}',
+    );
+    notes.add(
+      'TrendScore=$ts, breakout=${breakout ? 'yes' : 'no'}, volConfirm=${volConfirm ? 'yes' : 'no'}',
+    );
     if (entryPriceIfAlreadyIn != null) {
       // evaluate confirmation since entryDate
-      final entryIdx = entryDate == null ? (bars.length - 1) : bars.indexWhere((b) => b.date.isAtSameMomentAs(entryDate) || b.date.isAfter(entryDate));
+      final entryIdx = entryDate == null
+          ? (bars.length - 1)
+          : bars.indexWhere(
+              (b) =>
+                  b.date.isAtSameMomentAs(entryDate) ||
+                  b.date.isAfter(entryDate),
+            );
       if (entryIdx > 0 && entryIdx < bars.length) {
         // check for higher low and higher high since entry
         final post = bars.sublist(entryIdx);
         final postSig = structureSignals(post, lookback: post.length);
-        if (postSig['HL'] == true && postSig['HH'] == true) notes.add('Confirmed since entry (HH+HL).');
-        else notes.add('Not yet confirmed since entry.');
+        if (postSig['HL'] == true && postSig['HH'] == true) {
+          notes.add('Confirmed since entry (HH+HL).');
+        } else {
+          notes.add('Not yet confirmed since entry.');
+        }
       } else {
         notes.add('Entry index not found in history for confirmation check.');
       }
