@@ -62,13 +62,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       
                       // Add Button with Long Press History
                       GestureDetector(
-                          onDoubleTap: (details) {
+                          onLongPress: (details) {
                               _showHistoryMenu(context, details.globalPosition, provider);
                           },
                           child: IconButton(
                             icon: const Icon(Icons.add),
                             onPressed: () => provider.addSession(),
-                            tooltip: 'Add Tab (Long press for History)',
                           ),
                       ),
                     ],
