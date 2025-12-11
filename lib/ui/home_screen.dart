@@ -62,7 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       
                       // Add Button with Long Press History
                       GestureDetector(
-                          onLongPress: (details) {
+                          onLongPressStart: (details) {
                               _showHistoryMenu(context, details.globalPosition, provider);
                           },
                           child: IconButton(
