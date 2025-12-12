@@ -144,10 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .toList(),
     ).then((value) {
       if (value != null) {
-        provider.addSession();
-        Future.microtask(() {
-          provider.fetchStockData(value);
-        });
+        provider.switchSessionFromHistory(value);
       }
     });
   }

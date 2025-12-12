@@ -15,6 +15,8 @@ class HomeProvider extends ChangeNotifier {
   final YahooFinanceApi
   _yahooApi; // Direct access for search for now, or move to repo? Repo is better but Api for now is quick.
 
+  static int maxHistoryLength = 100;
+
   HomeProvider({StockRepository? repository})
     : _repository = repository ?? StockRepositoryImpl(),
       _yahooApi = YahooFinanceApi() {
@@ -29,10 +31,12 @@ class HomeProvider extends ChangeNotifier {
 
   // Chart Settings
   int visibleDays = 90;
+  int currentIndex = -1;
 
   // Search History
-  List<String> _searchHistory = [];
-  List<String> get searchHistory => List.unmodifiable(_searchHistory);
+  final Map<String,String> _searchHistory = {};
+
+  List<String> get searchHistory => List.unmodifiable(_searchHistory.keys);
 
   Future<void> loadSessions() async {
     final prefs = await SharedPreferences.getInstance();
@@ -45,10 +49,10 @@ class HomeProvider extends ChangeNotifier {
     trailMultiplier = prefs.getDouble('trailMultiplier') ?? 3.0;
 
     // Load History
-    final history = prefs.getStringList('searchHistory');
+    /*final history = prefs.getStringList('searchHistory');
     if (history != null) {
       _searchHistory = history;
-    }
+    }*/
 
     final String? sessionsJson = prefs.getString('sessions');
 
@@ -57,7 +61,13 @@ class HomeProvider extends ChangeNotifier {
     if (sessionsJson != null) {
       try {
         final List<dynamic> list = jsonDecode(sessionsJson);
-        _sessions.addAll(list.map((e) => StockSession.fromJson(e)).toList());
+        _sessions.addAll(
+          list.map((e) {
+            final session = StockSession.fromJson(e);
+            _addHistory(session);
+            return session;
+          }).toList(),
+        );
       } catch (e) {
         debugPrint('Error loading sessions: $e');
       }
@@ -90,20 +100,38 @@ class HomeProvider extends ChangeNotifier {
     await prefs.setDouble('trailMultiplier', trailMultiplier);
     await prefs.setInt('emaPeriod', emaPeriod);
     await prefs.setInt('visibleDays', visibleDays);
-    await prefs.setStringList('searchHistory', _searchHistory);
+    // await prefs.setStringList('searchHistory', _searchHistory);
   }
 
   final List<StockSession> _sessions = [];
+
   List<StockSession> get sessions => List.unmodifiable(_sessions);
 
   int _currentSessionIndex = 0;
+
   int get currentSessionIndex => _currentSessionIndex;
 
   StockSession get currentSession => _sessions[_currentSessionIndex];
 
+  void switchSessionFromHistory(String name){
+    if (_searchHistory.containsKey(name)){
+      final id = _searchHistory[name];
+      if (id != null){
+        final index = _sessions.indexWhere((element)=>element.id == id);
+        if (index > -1) {
+          setCurrentSession(index);
+        }
+      }
+    }
+  }
+  void _addHistory(StockSession session){
+    final key = session.symbol ?? session.title;
+    _searchHistory[key] = session.id;
+  }
   void addSession() {
     final session = StockSession(const Uuid().v4());
     _sessions.add(session);
+    _addHistory(session);
     _currentSessionIndex = _sessions.length - 1;
     saveSessions();
     notifyListeners();
@@ -111,7 +139,8 @@ class HomeProvider extends ChangeNotifier {
 
   void removeSession(int index) {
     if (_sessions.length <= 1) return; // Keep at least one
-    _sessions.removeAt(index);
+    final removed = _sessions.removeAt(index);
+    _searchHistory.remove(removed.symbol ?? removed.id);
     if (_currentSessionIndex >= _sessions.length) {
       _currentSessionIndex = _sessions.length - 1;
     }
@@ -181,16 +210,6 @@ class HomeProvider extends ChangeNotifier {
     }
   }
 
-  void addToHistory(String symbol) {
-    if (symbol.isEmpty) return;
-    _searchHistory.remove(symbol);
-    _searchHistory.insert(0, symbol);
-    if (_searchHistory.length > 20) {
-      _searchHistory = _searchHistory.sublist(0, 20);
-    }
-    saveGlobalSettings();
-  }
-
   Future<void> fetchStockData(
     String symbol, {
     bool forceRefresh = false,
@@ -220,7 +239,6 @@ class HomeProvider extends ChangeNotifier {
       );
       session.symbol = session.stockQuote?.symbol;
       session.lastRefreshedAt = DateTime.now();
-      addToHistory(session.symbol!); // Add to history
       _calculateStop(session);
       saveSessions();
     } catch (e) {
