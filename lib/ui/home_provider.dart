@@ -34,7 +34,7 @@ class HomeProvider extends ChangeNotifier {
   int currentIndex = -1;
 
   // Search History
-  final Map<String,String> _searchHistory = {};
+  final Map<String, String> _searchHistory = {};
 
   List<String> get searchHistory => List.unmodifiable(_searchHistory.keys);
 
@@ -113,21 +113,25 @@ class HomeProvider extends ChangeNotifier {
 
   StockSession get currentSession => _sessions[_currentSessionIndex];
 
-  void switchSessionFromHistory(String name){
-    if (_searchHistory.containsKey(name)){
+  void switchSessionFromHistory(String name) {
+    if (_searchHistory.containsKey(name)) {
       final id = _searchHistory[name];
-      if (id != null){
-        final index = _sessions.indexWhere((element)=>element.id == id);
+      if (id != null) {
+        final index = _sessions.indexWhere((element) => element.id == id);
         if (index > -1) {
           setCurrentSession(index);
         }
       }
     }
   }
-  void _addHistory(StockSession session){
-    final key = session.symbol ?? session.title;
-    _searchHistory[key] = session.id;
+
+  void _addHistory(StockSession session) {
+    final key = session.symbol;
+    if (key != null) {
+      _searchHistory[key] = session.id;
+    }
   }
+
   void addSession() {
     final session = StockSession(const Uuid().v4());
     _sessions.add(session);
@@ -140,7 +144,7 @@ class HomeProvider extends ChangeNotifier {
   void removeSession(int index) {
     if (_sessions.length <= 1) return; // Keep at least one
     final removed = _sessions.removeAt(index);
-    _searchHistory.remove(removed.symbol ?? removed.id);
+    _searchHistory.remove(removed.id);
     if (_currentSessionIndex >= _sessions.length) {
       _currentSessionIndex = _sessions.length - 1;
     }

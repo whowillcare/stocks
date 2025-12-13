@@ -17,20 +17,103 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  // Changed from SingleTickerProviderStateMixin
+  TabController? _tabController;
+  int _lastLength = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize with empty controller, will be set in didChangeDependencies
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeTabController();
+    });
+  }
+
+  void _initializeTabController() {
+    final provider = Provider.of<HomeProvider>(context, listen: false);
+    final length = provider.sessions.length;
+
+    if (length > 0) {
+      _tabController?.dispose();
+      _tabController = TabController(
+        length: length,
+        vsync: this,
+        initialIndex: provider.currentSessionIndex.clamp(0, length - 1),
+      );
+      _lastLength = length;
+
+      // Add listener to sync tab changes with provider
+      _tabController!.addListener(() {
+        if (!_tabController!.indexIsChanging &&
+            _tabController!.index != provider.currentSessionIndex) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              provider.setCurrentSession(_tabController!.index);
+            }
+          });
+        }
+      });
+
+      setState(() {});
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final provider = context.watch<HomeProvider>();
+    final length = provider.sessions.length;
+
+    // Only recreate controller if length changed
+    if (length != _lastLength) {
+      if (length > 0) {
+        _tabController?.dispose();
+        _tabController = TabController(
+          length: length,
+          vsync: this,
+          initialIndex: provider.currentSessionIndex.clamp(0, length - 1),
+        );
+        _lastLength = length;
+
+        // Re-add listener after recreating controller
+        _tabController!.addListener(() {
+          if (!_tabController!.indexIsChanging &&
+              _tabController!.index != provider.currentSessionIndex) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                provider.setCurrentSession(_tabController!.index);
+              }
+            });
+          }
+        });
+      } else {
+        _tabController?.dispose();
+        _tabController = null;
+        _lastLength = 0;
+      }
+    } else if (_tabController != null &&
+        _tabController!.index != provider.currentSessionIndex) {
+      // Just update the index if length hasn't changed
+      _tabController!.animateTo(provider.currentSessionIndex);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<HomeProvider>(
       builder: (context, provider, child) {
-        return DefaultTabController(
-          key: ValueKey(
-            provider.sessions.length,
-          ), // Rebuilds controller when count changes
-          length: provider.sessions.length,
-          initialIndex: provider.currentSessionIndex < provider.sessions.length
-              ? provider.currentSessionIndex
-              : 0,
-          child: Scaffold(
+        // Handle empty sessions case
+        if (provider.sessions.isEmpty) {
+          return Scaffold(
             appBar: AppBar(
               title: const Text('Stock Analyzer'),
               actions: [
@@ -44,33 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 preferredSize: const Size.fromHeight(48),
                 child: Row(
                   children: [
-                    Expanded(
-                      child: TabBar(
-                        isScrollable: true,
-                        // DefaultTabController manages the controller implicitly
-                        onTap: (index) => provider.setCurrentSession(index),
-                        tabs: provider.sessions
-                            .map(
-                              (s) => Tab(
-                                child: Row(
-                                  children: [
-                                    Text(s.title),
-                                    const SizedBox(width: 4),
-                                    InkWell(
-                                      onTap: () => provider.removeSession(
-                                        provider.sessions.indexOf(s),
-                                      ),
-                                      child: const Icon(Icons.close, size: 16),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-
-                    // Add Button with Long Press History
+                    const Expanded(child: SizedBox()),
                     GestureDetector(
                       onLongPressStart: (details) {
                         _showHistoryMenu(
@@ -88,37 +145,87 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-            body: Builder(
-              builder: (context) {
-                // Sync provider index with TabController changes
-                final controller = DefaultTabController.of(context);
-                controller.addListener(() {
-                  if (!controller.indexIsChanging &&
-                      controller.index != provider.currentSessionIndex) {
-                    // We can't update provider during build/notify cycle easily if this triggers loop
-                    // Ideally provider is source of truth.
-                    // With DefaultTabController re-creating, we rely on initialIndex.
-                    // For user swipes: we need to update provider.
-                    // But avoiding loop is key.
-                    // We'll update only if different.
-                    // Use addPostFrameCallback if needed or just separate check.
-                    if (provider.currentSessionIndex != controller.index) {
-                      // Use Future to avoid build-phase update
-                      Future.microtask(
-                        () => provider.setCurrentSession(controller.index),
-                      );
-                    }
-                  }
-                });
+            body: const Center(child: Text('No sessions. Press + to add one.')),
+          );
+        }
 
-                return TabBarView(
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Stock Analyzer'),
+            actions: [
+              if (provider.sessions.length > 1)
+                GestureDetector(
+                  onTapDown: (details) {
+                    _showHistoryMenu(context, details.globalPosition, provider);
+                  },
+                  child: const Icon(Icons.list),
+                ),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                tooltip: 'Global Strategy Settings',
+                onPressed: () => _showGlobalSettingsDialog(context, provider),
+              ),
+            ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(48),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _tabController == null
+                        ? const SizedBox()
+                        : TabBar(
+                            controller: _tabController,
+                            onTap: (index) => provider.setCurrentSession(index),
+                            isScrollable: true,
+                            tabs: provider.sessions
+                                .map(
+                                  (s) => Tab(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(s.title),
+                                        const SizedBox(width: 4),
+                                        InkWell(
+                                          onTap: () => provider.removeSession(
+                                            provider.sessions.indexOf(s),
+                                          ),
+                                          child: const Icon(
+                                            Icons.close,
+                                            size: 16,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                  ),
+                  GestureDetector(
+                    onLongPressStart: (details) {
+                      _showHistoryMenu(
+                        context,
+                        details.globalPosition,
+                        provider,
+                      );
+                    },
+                    child: IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () => provider.addSession(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          body: _tabController == null
+              ? const Center(child: CircularProgressIndicator())
+              : TabBarView(
+                  controller: _tabController,
                   children: provider.sessions
                       .map((session) => _SessionView(session: session))
                       .toList(),
-                );
-              },
-            ),
-          ),
+                ),
         );
       },
     );
@@ -162,59 +269,61 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context, setState) {
             return AlertDialog(
               title: const Text('Global Strategy Settings'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'ATR Strategy',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  TextField(
-                    decoration: const InputDecoration(labelText: 'Period'),
-                    keyboardType: TextInputType.number,
-                    controller: TextEditingController(
-                      text: tempAtrPeriod.toString(),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'ATR Strategy',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    onChanged: (v) =>
-                        tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
-                  ),
-                  TextField(
-                    decoration: const InputDecoration(
-                      labelText: 'Stop Loss Multiplier (ISL)',
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Period'),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempAtrPeriod.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
                     ),
-                    keyboardType: TextInputType.number,
-                    controller: TextEditingController(
-                      text: tempStopMult.toString(),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Stop Loss Multiplier (ISL)',
+                      ),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempStopMult.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempStopMult = double.tryParse(v) ?? tempStopMult,
                     ),
-                    onChanged: (v) =>
-                        tempStopMult = double.tryParse(v) ?? tempStopMult,
-                  ),
-                  TextField(
-                    decoration: const InputDecoration(
-                      labelText: 'Trailing Stop Multiplier',
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Trailing Stop Multiplier',
+                      ),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempTrailMult.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempTrailMult = double.tryParse(v) ?? tempTrailMult,
                     ),
-                    keyboardType: TextInputType.number,
-                    controller: TextEditingController(
-                      text: tempTrailMult.toString(),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'EMA Strategy',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    onChanged: (v) =>
-                        tempTrailMult = double.tryParse(v) ?? tempTrailMult,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'EMA Strategy',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  TextField(
-                    decoration: const InputDecoration(labelText: 'Period'),
-                    keyboardType: TextInputType.number,
-                    controller: TextEditingController(
-                      text: tempEmaPeriod.toString(),
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Period'),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempEmaPeriod.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
                     ),
-                    onChanged: (v) =>
-                        tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
-                  ),
-                ],
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
