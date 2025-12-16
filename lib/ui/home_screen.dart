@@ -290,13 +290,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         double tempTrailMult = provider.trailMultiplier;
         int tempEmaPeriod = provider.emaPeriod;
 
+        // Background config state
+        bool tempBgEnabled = provider.bgEnabled;
+        int tempBgStartHour = provider.bgStartHour;
+        int tempBgEndHour = provider.bgEndHour;
+        int tempBgFreq = provider.bgFrequencyMinutes;
+        bool tempBgExcludeWeekends = provider.bgExcludeWeekends;
+
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: const Text('Global Strategy Settings'),
+              title: const Text('Global Settings'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
                       'ATR Strategy',
@@ -313,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                     TextField(
                       decoration: const InputDecoration(
-                        labelText: 'Stop Loss Multiplier (ISL)',
+                        labelText: 'ISL Multiplier',
                       ),
                       keyboardType: TextInputType.number,
                       controller: TextEditingController(
@@ -324,7 +332,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                     TextField(
                       decoration: const InputDecoration(
-                        labelText: 'Trailing Stop Multiplier',
+                        labelText: 'Trailing Multiplier',
                       ),
                       keyboardType: TextInputType.number,
                       controller: TextEditingController(
@@ -347,6 +355,81 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       onChanged: (v) =>
                           tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
                     ),
+                    const Divider(),
+                    const Text(
+                      'Background Service',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Enable Background Checks'),
+                      value: tempBgEnabled,
+                      onChanged: (val) => setState(() => tempBgEnabled = val),
+                    ),
+                    if (tempBgEnabled) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              decoration: const InputDecoration(
+                                labelText: 'Start Hour (0-23)',
+                              ),
+                              keyboardType: TextInputType.number,
+                              controller: TextEditingController(
+                                text: tempBgStartHour.toString(),
+                              ),
+                              onChanged: (v) => tempBgStartHour =
+                                  int.tryParse(v) ?? tempBgStartHour,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              decoration: const InputDecoration(
+                                labelText: 'End Hour (0-23)',
+                              ),
+                              keyboardType: TextInputType.number,
+                              controller: TextEditingController(
+                                text: tempBgEndHour.toString(),
+                              ),
+                              onChanged: (v) => tempBgEndHour =
+                                  int.tryParse(v) ?? tempBgEndHour,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<int>(
+                        decoration: const InputDecoration(
+                          labelText: 'Frequency',
+                        ),
+                        value: tempBgFreq,
+                        items: const [
+                          DropdownMenuItem(
+                            value: 15,
+                            child: Text('Every 15 mins'),
+                          ),
+                          DropdownMenuItem(
+                            value: 60,
+                            child: Text('Every 1 hour'),
+                          ),
+                          DropdownMenuItem(
+                            value: 120,
+                            child: Text('Every 2 hours'),
+                          ),
+                          DropdownMenuItem(
+                            value: 360,
+                            child: Text('Every 6 hours'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => tempBgFreq = v ?? 60),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Exclude Weekends'),
+                        value: tempBgExcludeWeekends,
+                        onChanged: (val) =>
+                            setState(() => tempBgExcludeWeekends = val),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -355,7 +438,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Cancel'),
                 ),
-                TextButton(
+                ElevatedButton(
                   onPressed: () {
                     provider.updateGlobalAtrParams(
                       period: tempAtrPeriod,
@@ -363,6 +446,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       trailMultiplier: tempTrailMult,
                     );
                     provider.updateGlobalEmaParams(period: tempEmaPeriod);
+
+                    provider.updateBackgroundSettings(
+                      enabled: tempBgEnabled,
+                      startHour: tempBgStartHour,
+                      endHour: tempBgEndHour,
+                      frequencyMinutes: tempBgFreq,
+                      excludeWeekends: tempBgExcludeWeekends,
+                    );
+
                     Navigator.pop(context);
                   },
                   child: const Text('Save'),

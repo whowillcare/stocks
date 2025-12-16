@@ -1,5 +1,6 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -25,6 +26,14 @@ class NotificationService {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
+    // iOS/macOS Config
+    const DarwinInitializationSettings initializationSettingsDarwin =
+        DarwinInitializationSettings(
+          requestAlertPermission: true,
+          requestBadgePermission: true,
+          requestSoundPermission: true,
+        );
+
     // Linux Config
     final LinuxInitializationSettings initializationSettingsLinux =
         LinuxInitializationSettings(defaultActionName: 'Open notification');
@@ -33,6 +42,7 @@ class NotificationService {
     final InitializationSettings initializationSettings =
         InitializationSettings(
           android: initializationSettingsAndroid,
+          iOS: initializationSettingsDarwin,
           linux: initializationSettingsLinux,
         );
 
@@ -46,6 +56,16 @@ class NotificationService {
           }
         },
       );
+
+      // Request Android 13+ Permissions explicitly
+      if (!kIsWeb && Platform.isAndroid) {
+        final androidImplementation = flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+        await androidImplementation?.requestNotificationsPermission();
+      }
+
       _isInitialized = true;
     } catch (e) {
       debugPrint('Error initializing notifications: $e');

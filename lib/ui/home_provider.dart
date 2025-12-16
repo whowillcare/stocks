@@ -11,6 +11,7 @@ import '../domain/strategy/strategy.dart';
 import '../domain/analysis/trend_analyzer.dart';
 import 'stock_session.dart';
 import '../services/notification_service.dart';
+import '../services/background_service.dart';
 
 class HomeProvider extends ChangeNotifier {
   final StockRepository _repository;
@@ -34,6 +35,13 @@ class HomeProvider extends ChangeNotifier {
   double atrMultiplier = 3.0; // ISL multiplier
   double trailMultiplier = 3.0; // Trailing stop multiplier
   int emaPeriod = 20;
+
+  // Background Settings
+  bool bgEnabled = true;
+  int bgStartHour = 9; // 9 AM
+  int bgEndHour = 17; // 5 PM
+  int bgFrequencyMinutes = 60; // 1 hour
+  bool bgExcludeWeekends = true;
 
   // Chart Settings
   int visibleDays = 90;
@@ -84,6 +92,13 @@ class HomeProvider extends ChangeNotifier {
     emaPeriod = prefs.getInt('emaPeriod') ?? 20;
     visibleDays = prefs.getInt('visibleDays') ?? 90;
     trailMultiplier = prefs.getDouble('trailMultiplier') ?? 3.0;
+
+    // Load BG Settings
+    bgEnabled = prefs.getBool('bgEnabled') ?? true;
+    bgStartHour = prefs.getInt('bgStartHour') ?? 9;
+    bgEndHour = prefs.getInt('bgEndHour') ?? 17;
+    bgFrequencyMinutes = prefs.getInt('bgFrequencyMinutes') ?? 60;
+    bgExcludeWeekends = prefs.getBool('bgExcludeWeekends') ?? true;
 
     // Load History
     /*final history = prefs.getStringList('searchHistory');
@@ -150,7 +165,12 @@ class HomeProvider extends ChangeNotifier {
     await prefs.setDouble('trailMultiplier', trailMultiplier);
     await prefs.setInt('emaPeriod', emaPeriod);
     await prefs.setInt('visibleDays', visibleDays);
-    // await prefs.setStringList('searchHistory', _searchHistory);
+
+    await prefs.setBool('bgEnabled', bgEnabled);
+    await prefs.setInt('bgStartHour', bgStartHour);
+    await prefs.setInt('bgEndHour', bgEndHour);
+    await prefs.setInt('bgFrequencyMinutes', bgFrequencyMinutes);
+    await prefs.setBool('bgExcludeWeekends', bgExcludeWeekends);
   }
 
   final List<StockSession> _sessions = [];
@@ -572,5 +592,27 @@ class HomeProvider extends ChangeNotifier {
     _recalculateAllStops();
     saveGlobalSettings();
     notifyListeners();
+  }
+
+  void updateBackgroundSettings({
+    bool? enabled,
+    int? startHour,
+    int? endHour,
+    int? frequencyMinutes,
+    bool? excludeWeekends,
+  }) {
+    if (enabled != null) bgEnabled = enabled;
+    if (startHour != null) bgStartHour = startHour;
+    if (endHour != null) bgEndHour = endHour;
+    if (frequencyMinutes != null) bgFrequencyMinutes = frequencyMinutes;
+    if (excludeWeekends != null) bgExcludeWeekends = excludeWeekends;
+
+    saveGlobalSettings();
+    notifyListeners();
+
+    BackgroundService.register(
+      frequency: Duration(minutes: bgFrequencyMinutes),
+      initialDelay: const Duration(minutes: 15),
+    );
   }
 }
