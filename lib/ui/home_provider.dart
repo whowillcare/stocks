@@ -83,13 +83,14 @@ class HomeProvider extends ChangeNotifier {
         fetchStockDataForSession(session, session.symbol!); // Re-fetch data
       }
     }
-
+    _updateSessionMap();
     notifyListeners();
   }
 
   Future<void> saveSessions() async {
     final prefs = await SharedPreferences.getInstance();
     final String json = jsonEncode(_sessions.map((e) => e.toJson()).toList());
+    _updateSessionMap();
     await prefs.setString('sessions', json);
   }
 
@@ -104,6 +105,14 @@ class HomeProvider extends ChangeNotifier {
   }
 
   final List<StockSession> _sessions = [];
+  final Map<String, StockSession> _sessionMap = {};
+
+  void _updateSessionMap() {
+    _sessionMap.clear();
+    for (var session in _sessions) {
+      _sessionMap[session.id] = session;
+    }
+  }
 
   List<StockSession> get sessions => List.unmodifiable(_sessions);
 
@@ -231,9 +240,28 @@ class HomeProvider extends ChangeNotifier {
     bool forceRefresh = false,
   }) async {
     if (symbol.isEmpty) return;
-
+    bool switchTab = false;
+    if (_searchHistory.containsKey(symbol)) {
+      final historySession = _searchHistory[symbol];
+      if (historySession != null) {
+        if (session.id != historySession) {
+          if (session.symbol == null) {
+            removeSession(
+              _sessions.indexWhere((element) => element.id == session.id),
+            );
+          }
+          session = _sessionMap[historySession]!;
+          switchTab = true;
+        }
+      }
+    }
     session.isLoading = true;
     session.errorMessage = null;
+    if (switchTab) {
+      setCurrentSession(
+        _sessions.indexWhere((element) => element.id == session.id),
+      );
+    }
     notifyListeners();
 
     try {
