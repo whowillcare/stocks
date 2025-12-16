@@ -25,6 +25,9 @@ class StockSession {
 
   DateTime? lastRefreshedAt;
 
+  TrendAnalysisResult? previousTrendAnalysis;
+  double? previousTrailingStop;
+
   StockSession(this.id);
 
   String get title => symbol ?? 'New Tab';
@@ -36,6 +39,8 @@ class StockSession {
       'selectedStrategyIndex': selectedStrategyIndex,
       'entryDate': entryDate?.toIso8601String(),
       'entryPrice': entryPrice,
+      'previousTrendAnalysis': previousTrendAnalysis?.toJson(),
+      'previousTrailingStop': previousTrailingStop,
     };
   }
 
@@ -47,6 +52,13 @@ class StockSession {
       session.entryDate = DateTime.tryParse(json['entryDate']);
     }
     session.entryPrice = (json['entryPrice'] as num?)?.toDouble();
+    if (json['previousTrendAnalysis'] != null) {
+      session.previousTrendAnalysis = TrendAnalysisResultParams.fromJson(
+        json['previousTrendAnalysis'],
+      );
+    }
+    session.previousTrailingStop = (json['previousTrailingStop'] as num?)
+        ?.toDouble();
     return session;
   }
 }

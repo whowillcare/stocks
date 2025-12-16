@@ -6,9 +6,11 @@ import '../data/repository.dart';
 import '../data/yahoo_api.dart'; // For search candidates
 
 import '../domain/model/search_result.dart';
+import '../domain/model/stock_event.dart';
 import '../domain/strategy/strategy.dart';
 import '../domain/analysis/trend_analyzer.dart';
 import 'stock_session.dart';
+import '../services/notification_service.dart';
 
 class HomeProvider extends ChangeNotifier {
   final StockRepository _repository;
@@ -16,6 +18,10 @@ class HomeProvider extends ChangeNotifier {
   _yahooApi; // Direct access for search for now, or move to repo? Repo is better but Api for now is quick.
 
   static int maxHistoryLength = 100;
+  static int maxEventLogLength = 50;
+
+  // Available strategies
+  final List<StopStrategy> _strategies = [AtrStopStrategy(), EmaStopStrategy()];
 
   HomeProvider({StockRepository? repository})
     : _repository = repository ?? StockRepositoryImpl(),
@@ -38,6 +44,37 @@ class HomeProvider extends ChangeNotifier {
 
   List<String> get searchHistory => List.unmodifiable(_searchHistory.keys);
 
+  final List<StockEvent> _eventLog = [];
+  List<StockEvent> get eventLog => List.unmodifiable(_eventLog);
+
+  void addEvent(String symbol, String message, {String type = 'info'}) {
+    _eventLog.add(
+      StockEvent(
+        timestamp: DateTime.now(),
+        symbol: symbol,
+        message: message,
+        type: type,
+      ),
+    );
+    if (_eventLog.length > maxEventLogLength) {
+      _eventLog.removeAt(0); // Keep size limited
+    }
+    saveEvents();
+    notifyListeners();
+  }
+
+  void clearEvents() {
+    _eventLog.clear();
+    saveEvents();
+    notifyListeners();
+  }
+
+  Future<void> saveEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonVal = jsonEncode(_eventLog.map((e) => e.toJson()).toList());
+    await prefs.setString('eventLog', jsonVal);
+  }
+
   Future<void> loadSessions() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -53,6 +90,16 @@ class HomeProvider extends ChangeNotifier {
     if (history != null) {
       _searchHistory = history;
     }*/
+
+    final String? eventsJson = prefs.getString('eventLog');
+    if (eventsJson != null) {
+      try {
+        final List<dynamic> list = jsonDecode(eventsJson);
+        _eventLog.addAll(list.map((e) => StockEvent.fromJson(e)).toList());
+      } catch (e) {
+        debugPrint('Error loading events: $e');
+      }
+    }
 
     final String? sessionsJson = prefs.getString('sessions');
 
@@ -78,11 +125,13 @@ class HomeProvider extends ChangeNotifier {
     }
 
     // Restore data for loaded sessions if symbol exists
-    for (var session in _sessions) {
-      if (session.symbol != null) {
-        fetchStockDataForSession(session, session.symbol!); // Re-fetch data
-      }
+    // We use refreshAllSessions with force=false to check for updates but respect cache validity logic
+    // if implemented in repo, otherwise it just fetches.
+    // Actually repo.getStockData defaults to checking cache if not forced.
+    if (_sessions.isNotEmpty) {
+      refreshAllSessions(forceRefresh: false);
     }
+
     _updateSessionMap();
     notifyListeners();
   }
@@ -154,6 +203,12 @@ class HomeProvider extends ChangeNotifier {
     if (_sessions.length <= 1) return; // Keep at least one
     final removed = _sessions.removeAt(index);
     _searchHistory.remove(removed.id);
+    // Remove related events
+    if (removed.symbol != null) {
+      _eventLog.removeWhere((e) => e.symbol == removed.symbol);
+      saveEvents();
+    }
+
     if (_currentSessionIndex >= _sessions.length) {
       _currentSessionIndex = _sessions.length - 1;
     }
@@ -221,6 +276,184 @@ class HomeProvider extends ChangeNotifier {
       // But for consistency let's notify.
       notifyListeners();
     }
+  }
+
+  Future<void> refreshAllSessions({bool forceRefresh = true}) async {
+    final changes = <String>[];
+    for (var session in _sessions) {
+      if (session.symbol != null) {
+        // Save previous state
+        session.previousTrendAnalysis = session.trendAnalysis;
+        session.previousTrailingStop = session.trailingStopPrice;
+
+        // Fetch new data
+        await fetchStockDataForSession(
+          session,
+          session.symbol!,
+          forceRefresh: forceRefresh,
+        );
+
+        // Compare
+        final diff = _compareSessionChanges(session);
+        if (diff.isNotEmpty) {
+          final msg = '$diff';
+          changes.add('${session.symbol}: $msg');
+          // For now, these real-time alerts are type 'trend' or 'info'
+          addEvent(session.symbol!, msg, type: 'trend');
+        }
+
+        // Generate historical events if entered
+        if (session.entryDate != null && session.entryPrice != null) {
+          final histEvents = _generateHistoricalEvents(session);
+          changes.addAll(histEvents);
+        }
+      }
+    }
+
+    if (changes.isNotEmpty) {
+      // Show latest event content
+      final body = changes.length == 1
+          ? changes.first
+          : '${changes.length} updates. Latest: ${changes.last}';
+
+      NotificationService().showNotification(
+        id: 0,
+        title: 'Stock Analysis Updates',
+        body: body,
+        payload: 'events',
+      );
+    }
+  }
+
+  List<String> _generateHistoricalEvents(StockSession session) {
+    if (session.stockQuote == null || session.stockQuote!.candles.isEmpty)
+      return [];
+    if (session.entryDate == null || session.entryPrice == null) return [];
+
+    final symbol = session.symbol!;
+    // Clear existing generated events
+    _eventLog.removeWhere((e) => e.symbol == symbol && e.type == 'stop_loss');
+
+    final candles = session.stockQuote!.candles;
+    final entryDate = session.entryDate!;
+    final List<String> generatedMsgs = [];
+
+    // Find entry index
+    int entryIndex = -1;
+    for (int i = 0; i < candles.length; i++) {
+      final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
+      if (d.year == entryDate.year &&
+          d.month == entryDate.month &&
+          d.day == entryDate.day) {
+        entryIndex = i;
+        break;
+      }
+    }
+
+    if (entryIndex == -1) {
+      for (int i = 0; i < candles.length; i++) {
+        final d = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
+        if (d.isAfter(entryDate)) {
+          entryIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (entryIndex == -1) return [];
+
+    final strategy = _strategies[session.selectedStrategyIndex];
+    if (strategy is! AtrStopStrategy) return [];
+
+    double? prevStop;
+
+    for (int i = entryIndex; i < candles.length; i++) {
+      final slice = candles.sublist(0, i + 1);
+      final date = DateTime.fromMillisecondsSinceEpoch(candles[i].date * 1000);
+
+      final result = strategy.calculateStopPrice(
+        slice,
+        entryDate: session.entryDate,
+        entryPrice: session.entryPrice,
+      );
+
+      double? currentStop = result.trailingStopPrice;
+
+      if (currentStop != null) {
+        if (prevStop != null && currentStop < prevStop) {
+          currentStop = prevStop;
+        }
+
+        if (prevStop != null && currentStop > prevStop) {
+          final diff = currentStop - prevStop;
+          if (diff > 0.01) {
+            final msg =
+                'Stop Raised: ${prevStop.toStringAsFixed(2)} -> ${currentStop.toStringAsFixed(2)}';
+            _eventLog.add(
+              StockEvent(
+                timestamp: date,
+                symbol: symbol,
+                message: msg,
+                type: 'stop_loss',
+              ),
+            );
+
+            // Return content if it's the LATEST day (today/yesterday)
+            // to avoid spamming notification with old history backfill
+            if (i == candles.length - 1) {
+              generatedMsgs.add('$symbol: $msg');
+            }
+          }
+        }
+        prevStop = currentStop;
+      }
+    }
+
+    _eventLog.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    saveEvents();
+    return generatedMsgs;
+  }
+
+  String _compareSessionChanges(StockSession session) {
+    final old = session.previousTrendAnalysis;
+    final curr = session.trendAnalysis;
+    final parts = <String>[];
+
+    if (old == null || curr == null) return '';
+
+    // Trend Score
+    if (old.trendScore != curr.trendScore) {
+      parts.add('Score ${old.trendScore}->${curr.trendScore}');
+    }
+
+    // Trend Label
+    if (old.trend != curr.trend) {
+      parts.add('Trend ${old.trend}->${curr.trend}');
+    }
+
+    // Structure
+    if (old.structure['HH'] != curr.structure['HH']) {
+      parts.add(curr.structure['HH'] == true ? '+HH' : '-HH');
+    }
+    if (old.structure['HL'] != curr.structure['HL']) {
+      parts.add(curr.structure['HL'] == true ? '+HL' : '-HL');
+    }
+
+    // Trailing Stop
+    if (session.previousTrailingStop != null &&
+        session.trailingStopPrice != null) {
+      if ((session.previousTrailingStop! - session.trailingStopPrice!).abs() >
+          0.01) {
+        // Only show if it MOVED UP (usually TS only goes up or stays) or changed significantly
+        if (session.trailingStopPrice! > session.previousTrailingStop!) {
+          parts.add(
+            'Stop raised to ${session.trailingStopPrice!.toStringAsFixed(2)}',
+          );
+        }
+      }
+    }
+
+    return parts.join(', ');
   }
 
   Future<void> fetchStockData(

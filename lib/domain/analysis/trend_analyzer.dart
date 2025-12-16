@@ -458,3 +458,40 @@ class TrendAnalyzer {
     );
   }
 }
+
+// --- Serialization Extensions ---
+extension TrendAnalysisResultParams on TrendAnalysisResult {
+  Map<String, dynamic> toJson() {
+    return {
+      'trendScore': trendScore,
+      'trend': trend,
+      'atr': atr,
+      'ema20': ema20,
+      'ema50': ema50,
+      'entryMin': entryMin,
+      'entryMax': entryMax,
+      'entryAdvice': entryAdvice,
+      'volumeConfirm': volumeConfirm,
+      'breakoutDetected': breakoutDetected,
+      'structure': structure,
+      'notes': notes,
+    };
+  }
+
+  static TrendAnalysisResult fromJson(Map<String, dynamic> json) {
+    return TrendAnalysisResult(
+      trendScore: json['trendScore'],
+      trend: json['trend'],
+      atr: (json['atr'] as num).toDouble(),
+      ema20: (json['ema20'] as num).toDouble(),
+      ema50: (json['ema50'] as num).toDouble(),
+      entryMin: (json['entryMin'] as num).toDouble(),
+      entryMax: (json['entryMax'] as num).toDouble(),
+      entryAdvice: json['entryAdvice'],
+      volumeConfirm: json['volumeConfirm'],
+      breakoutDetected: json['breakoutDetected'],
+      structure: Map<String, bool>.from(json['structure']),
+      notes: List<String>.from(json['notes']),
+    );
+  }
+}

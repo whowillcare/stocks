@@ -9,6 +9,7 @@ import '../domain/analysis/monitor_engine.dart';
 import 'home_provider.dart';
 import 'stock_session.dart';
 import '../domain/strategy/strategy.dart'; // For calculation logic
+import 'event_log_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -118,6 +119,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               title: const Text('Stock Analyzer'),
               actions: [
                 IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh All',
+                  onPressed: () =>
+                      provider.refreshAllSessions(forceRefresh: true),
+                ),
+                IconButton(
                   icon: const Icon(Icons.settings),
                   tooltip: 'Global Strategy Settings',
                   onPressed: () => _showGlobalSettingsDialog(context, provider),
@@ -153,6 +160,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           appBar: AppBar(
             title: const Text('Stock Analyzer'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.notifications),
+                tooltip: 'Event Log',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const EventLogScreen(),
+                    ),
+                  );
+                },
+              ),
               if (provider.sessions.length > 1)
                 GestureDetector(
                   onTapDown: (details) {
@@ -164,6 +183,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 icon: const Icon(Icons.settings),
                 tooltip: 'Global Strategy Settings',
                 onPressed: () => _showGlobalSettingsDialog(context, provider),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh All',
+                onPressed: () =>
+                    provider.refreshAllSessions(forceRefresh: true),
               ),
             ],
             bottom: PreferredSize(
