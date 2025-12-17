@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'home_provider.dart';
+import 'home_screen.dart'; // For SessionView
 import 'package:intl/intl.dart';
 
 class EventLogScreen extends StatelessWidget {
@@ -45,15 +46,84 @@ class EventLogScreen extends StatelessWidget {
               final latest = events.first;
 
               return ExpansionTile(
-                leading: CircleAvatar(
-                  child: Text(symbol.substring(0, min(2, symbol.length))),
+                leading: GestureDetector(
+                  onTap: () {
+                    // Find session or fallback
+                    final provider = Provider.of<HomeProvider>(
+                      context,
+                      listen: false,
+                    );
+                    final sessionIndex = provider.sessions.indexWhere(
+                      (s) => s.symbol == symbol,
+                    );
+
+                    if (sessionIndex != -1) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => Scaffold(
+                            appBar: AppBar(title: Text('$symbol Session')),
+                            body: SessionView(
+                              session: provider.sessions[sessionIndex],
+                            ),
+                          ),
+                        ),
+                      );
+                    } else {
+                      // Optional: Allow viewing archived/deleted session if we stored it?
+                      // For now just show snackbar
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Active session for this symbol not found.',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  child: CircleAvatar(
+                    child: Text(symbol.substring(0, min(2, symbol.length))),
+                  ),
                 ),
-                title: Text(
-                  symbol,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                title: GestureDetector(
+                  onTap: () {
+                    // Duplicate logic for title tap
+                    final provider = Provider.of<HomeProvider>(
+                      context,
+                      listen: false,
+                    );
+                    final sessionIndex = provider.sessions.indexWhere(
+                      (s) => s.symbol == symbol,
+                    );
+                    if (sessionIndex != -1) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => Scaffold(
+                            appBar: AppBar(title: Text('$symbol Session')),
+                            body: SessionView(
+                              session: provider.sessions[sessionIndex],
+                            ),
+                          ),
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Active session for this symbol not found.',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  child: Text(
+                    symbol,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
                 subtitle: Text(
-                  '${DateFormat('MM-dd').format(latest.timestamp)}: ${latest.message}',
+                  latest.message, // Changed from original to match instruction
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),

@@ -43,6 +43,12 @@ class HomeProvider extends ChangeNotifier {
   int bgFrequencyMinutes = 60; // 1 hour
   bool bgExcludeWeekends = true;
 
+  // Advanced Global Settings
+  String globalStrategyName = 'ATR'; // 'ATR' or 'EMA'
+  int maxHoldingDays = 20;
+  String urlTemplates =
+      'https://finance.yahoo.com/quote/{symbol}/\nhttps://stockanalysis.com/stocks/{symbol}/';
+
   // Chart Settings
   int visibleDays = 90;
   int currentIndex = -1;
@@ -98,6 +104,14 @@ class HomeProvider extends ChangeNotifier {
     bgStartHour = prefs.getInt('bgStartHour') ?? 9;
     bgEndHour = prefs.getInt('bgEndHour') ?? 17;
     bgFrequencyMinutes = prefs.getInt('bgFrequencyMinutes') ?? 60;
+    bgExcludeWeekends = prefs.getBool('bgExcludeWeekends') ?? true;
+
+    // Load Advanced Settings
+    globalStrategyName = prefs.getString('globalStrategyName') ?? 'ATR';
+    maxHoldingDays = prefs.getInt('maxHoldingDays') ?? 20;
+    urlTemplates =
+        prefs.getString('urlTemplates') ??
+        'https://finance.yahoo.com/quote/{symbol}/';
     bgExcludeWeekends = prefs.getBool('bgExcludeWeekends') ?? true;
 
     // Load History
@@ -158,6 +172,20 @@ class HomeProvider extends ChangeNotifier {
     await prefs.setString('sessions', json);
   }
 
+  void updateAdvancedSettings({
+    String? strategyName,
+    int? holdingDays,
+    String? templates,
+  }) {
+    if (strategyName != null) globalStrategyName = strategyName;
+    if (holdingDays != null) maxHoldingDays = holdingDays;
+    if (templates != null) urlTemplates = templates;
+
+    saveGlobalSettings();
+    _recalculateAllStops(); // Strategy change might affect calculation if we switch strategy
+    notifyListeners();
+  }
+
   Future<void> saveGlobalSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('atrPeriod', atrPeriod);
@@ -166,6 +194,12 @@ class HomeProvider extends ChangeNotifier {
     await prefs.setInt('emaPeriod', emaPeriod);
     await prefs.setInt('visibleDays', visibleDays);
 
+    // Advanced persistence
+    await prefs.setString('globalStrategyName', globalStrategyName);
+    await prefs.setInt('maxHoldingDays', maxHoldingDays);
+    await prefs.setString('urlTemplates', urlTemplates);
+
+    // Background Persistance
     await prefs.setBool('bgEnabled', bgEnabled);
     await prefs.setInt('bgStartHour', bgStartHour);
     await prefs.setInt('bgEndHour', bgEndHour);
@@ -316,7 +350,7 @@ class HomeProvider extends ChangeNotifier {
         // Compare
         final diff = _compareSessionChanges(session);
         if (diff.isNotEmpty) {
-          final msg = '$diff';
+          final msg = diff;
           changes.add('${session.symbol}: $msg');
           // For now, these real-time alerts are type 'trend' or 'info'
           addEvent(session.symbol!, msg, type: 'trend');
@@ -346,8 +380,9 @@ class HomeProvider extends ChangeNotifier {
   }
 
   List<String> _generateHistoricalEvents(StockSession session) {
-    if (session.stockQuote == null || session.stockQuote!.candles.isEmpty)
+    if (session.stockQuote == null || session.stockQuote!.candles.isEmpty) {
       return [];
+    }
     if (session.entryDate == null || session.entryPrice == null) return [];
 
     final symbol = session.symbol!;
@@ -553,15 +588,30 @@ class HomeProvider extends ChangeNotifier {
   void _calculateStop(StockSession session) {
     if (session.stockQuote == null) return;
 
+    // Select Strategy based on Global Setting
     StopStrategy strategy;
-    if (session.selectedStrategyIndex == 0) {
+    if (globalStrategyName == 'EMA') {
+      strategy = _strategies.firstWhere(
+        (s) => s is EmaStopStrategy,
+        orElse: () => EmaStopStrategy(period: emaPeriod),
+      );
+      if (strategy is EmaStopStrategy && strategy.period != emaPeriod) {
+        strategy = EmaStopStrategy(
+          period: emaPeriod,
+        ); // Ensure checks use updated params
+      }
+    } else {
+      // Default ATR
+      strategy = _strategies.firstWhere(
+        (s) => s is AtrStopStrategy,
+        orElse: () => AtrStopStrategy(),
+      );
+      // Re-create if params differ (simplest way to ensure latest params)
       strategy = AtrStopStrategy(
         period: atrPeriod,
         stopMultiplier: atrMultiplier,
         trailMultiplier: trailMultiplier,
       );
-    } else {
-      strategy = EmaStopStrategy(period: emaPeriod);
     }
 
     final result = strategy.calculateStopPrice(
@@ -578,6 +628,41 @@ class HomeProvider extends ChangeNotifier {
     final candles = session.stockQuote!.candles;
     final analyzer = TrendAnalyzer(atrPeriod: atrPeriod);
     session.trendAnalysis = analyzer.analyze(candles);
+
+    // === Max Holding Logic ===
+    if (session.entryDate != null) {
+      final daysHeld = DateTime.now().difference(session.entryDate!).inDays;
+      if (daysHeld > maxHoldingDays) {
+        // Check if we already have a warning for this to avoid spam
+        // We'll update the latest event if it's a Max Holding warning, or create new
+        bool updated = false;
+        if (_eventLog.isNotEmpty &&
+            _eventLog.last.symbol == session.symbol &&
+            _eventLog.last.type == 'warning') {
+          if (_eventLog.last.message.contains('Max Holding exceeded')) {
+            // Replace/Update the last event (hacky but avoids spamming)
+            _eventLog.removeLast();
+            addEvent(
+              session.symbol!,
+              'Max Holding exceeded: Held for $daysHeld days (Limit: $maxHoldingDays)',
+              type: 'warning',
+            );
+            updated = true;
+          }
+        }
+
+        if (!updated) {
+          // Check if we have logged this recently? For now, just log it.
+          // To prevent spam on every refresh, maybe check date of last similar event?
+          // Simple approach: Log it. User said "just update the entry's hold day".
+          addEvent(
+            session.symbol!,
+            'Max Holding exceeded: Held for $daysHeld days (Limit: $maxHoldingDays)',
+            type: 'warning',
+          );
+        }
+      }
+    }
   }
 
   void updateTrendParams({

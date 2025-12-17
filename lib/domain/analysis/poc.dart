@@ -149,8 +149,9 @@ List<int> localTroughs(List<double> arr) {
 
 // Check HH/HL/LH/LL over last lookback days
 Map<String, bool> structureSignals(List<OHLCV> bars, {int lookback = 14}) {
-  if (bars.length < 5)
+  if (bars.length < 5) {
     return {'HH': false, 'HL': false, 'LH': false, 'LL': false};
+  }
   final sliceStart = max(0, bars.length - lookback);
   final sub = bars.sublist(sliceStart);
   final highs = sub.map((b) => b.high).toList();

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../domain/model/search_result.dart';
 import '../domain/model/stock_data.dart' as domain; // Alias to avoid collision
 import '../domain/analysis/monitor_engine.dart';
@@ -248,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               : TabBarView(
                   controller: _tabController,
                   children: provider.sessions
-                      .map((session) => _SessionView(session: session))
+                      .map((session) => SessionView(session: session))
                       .toList(),
                 ),
         );
@@ -297,6 +298,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         int tempBgFreq = provider.bgFrequencyMinutes;
         bool tempBgExcludeWeekends = provider.bgExcludeWeekends;
 
+        // Advanced Settings
+        String tempStrategy = provider.globalStrategyName;
+        int tempMaxHolding = provider.maxHoldingDays;
+        String tempUrlTemplates = provider.urlTemplates;
+
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
@@ -307,54 +313,122 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'ATR Strategy',
+                      'Strategy Selection',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    TextField(
-                      decoration: const InputDecoration(labelText: 'Period'),
-                      keyboardType: TextInputType.number,
-                      controller: TextEditingController(
-                        text: tempAtrPeriod.toString(),
-                      ),
+                    DropdownButtonFormField<String>(
+                      initialValue: tempStrategy,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'ATR',
+                          child: Text('ATR Strategy'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'EMA',
+                          child: Text('EMA Strategy'),
+                        ),
+                      ],
                       onChanged: (v) =>
-                          tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
-                    ),
-                    TextField(
+                          setState(() => tempStrategy = v ?? 'ATR'),
                       decoration: const InputDecoration(
-                        labelText: 'ISL Multiplier',
+                        labelText: 'Active Strategy',
                       ),
-                      keyboardType: TextInputType.number,
-                      controller: TextEditingController(
-                        text: tempStopMult.toString(),
-                      ),
-                      onChanged: (v) =>
-                          tempStopMult = double.tryParse(v) ?? tempStopMult,
                     ),
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'Trailing Multiplier',
+                    const SizedBox(height: 8),
+
+                    if (tempStrategy == 'ATR') ...[
+                      const Text(
+                        'ATR Parameters',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
-                      keyboardType: TextInputType.number,
-                      controller: TextEditingController(
-                        text: tempTrailMult.toString(),
+                      TextField(
+                        decoration: const InputDecoration(labelText: 'Period'),
+                        keyboardType: TextInputType.number,
+                        controller: TextEditingController(
+                          text: tempAtrPeriod.toString(),
+                        ),
+                        onChanged: (v) =>
+                            tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
                       ),
-                      onChanged: (v) =>
-                          tempTrailMult = double.tryParse(v) ?? tempTrailMult,
-                    ),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'ISL Multiplier',
+                        ),
+                        keyboardType: TextInputType.number,
+                        controller: TextEditingController(
+                          text: tempStopMult.toString(),
+                        ),
+                        onChanged: (v) =>
+                            tempStopMult = double.tryParse(v) ?? tempStopMult,
+                      ),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Trailing Multiplier',
+                        ),
+                        keyboardType: TextInputType.number,
+                        controller: TextEditingController(
+                          text: tempTrailMult.toString(),
+                        ),
+                        onChanged: (v) =>
+                            tempTrailMult = double.tryParse(v) ?? tempTrailMult,
+                      ),
+                    ],
+
+                    if (tempStrategy == 'EMA') ...[
+                      const Text(
+                        'EMA Parameters',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      TextField(
+                        decoration: const InputDecoration(labelText: 'Period'),
+                        keyboardType: TextInputType.number,
+                        controller: TextEditingController(
+                          text: tempEmaPeriod.toString(),
+                        ),
+                        onChanged: (v) =>
+                            tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
+                      ),
+                    ],
+
                     const SizedBox(height: 16),
                     const Text(
-                      'EMA Strategy',
+                      'Risk Management',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     TextField(
-                      decoration: const InputDecoration(labelText: 'Period'),
+                      decoration: const InputDecoration(
+                        labelText: 'Max Holding Days (Warning)',
+                      ),
                       keyboardType: TextInputType.number,
                       controller: TextEditingController(
-                        text: tempEmaPeriod.toString(),
+                        text: tempMaxHolding.toString(),
                       ),
                       onChanged: (v) =>
-                          tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
+                          tempMaxHolding = int.tryParse(v) ?? tempMaxHolding,
                     ),
+
+                    const SizedBox(height: 16),
+                    const Text(
+                      'External URLs',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'URL Templates (one per line)',
+                        hintText: 'https://site.com/{symbol}/',
+                      ),
+                      keyboardType: TextInputType.multiline,
+                      maxLines: 3,
+                      controller: TextEditingController(text: tempUrlTemplates),
+                      onChanged: (v) => tempUrlTemplates = v,
+                    ),
+
                     const Divider(),
                     const Text(
                       'Background Service',
@@ -402,7 +476,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         decoration: const InputDecoration(
                           labelText: 'Frequency',
                         ),
-                        value: tempBgFreq,
+                        initialValue: tempBgFreq,
                         items: const [
                           DropdownMenuItem(
                             value: 15,
@@ -455,6 +529,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       excludeWeekends: tempBgExcludeWeekends,
                     );
 
+                    provider.updateAdvancedSettings(
+                      strategyName: tempStrategy,
+                      holdingDays: tempMaxHolding,
+                      templates: tempUrlTemplates,
+                    );
+
                     Navigator.pop(context);
                   },
                   child: const Text('Save'),
@@ -468,16 +548,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 }
 
-class _SessionView extends StatefulWidget {
+class SessionView extends StatefulWidget {
   final StockSession session;
 
-  const _SessionView({required this.session});
+  const SessionView({super.key, required this.session});
 
   @override
-  State<_SessionView> createState() => _SessionViewState();
+  State<SessionView> createState() => SessionViewState();
 }
 
-class _SessionViewState extends State<_SessionView> {
+class SessionViewState extends State<SessionView> {
   bool _isMaximized = false;
 
   @override
@@ -565,6 +645,73 @@ class _SessionViewState extends State<_SessionView> {
         ),
         const SizedBox(width: 8),
         IconButton(
+          icon: const Icon(Icons.link),
+          tooltip: 'Open External Links',
+          onPressed: () async {
+            if (session.symbol == null) return;
+            final templates = provider.urlTemplates
+                .split('\n')
+                .where((l) => l.trim().isNotEmpty)
+                .toList();
+
+            if (templates.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'No URL templates configured in Global Settings.',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            if (templates.length == 1) {
+              final urlObj = Uri.parse(
+                templates.first.replaceAll('{symbol}', session.symbol!),
+              );
+              if (await canLaunchUrl(urlObj)) {
+                await launchUrl(urlObj, mode: LaunchMode.externalApplication);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Could not launch $urlObj')),
+                );
+              }
+            } else {
+              // Show menu
+              final RenderBox button = context.findRenderObject() as RenderBox;
+              final overlay =
+                  Overlay.of(context).context.findRenderObject() as RenderBox;
+              final position = RelativeRect.fromRect(
+                Rect.fromPoints(
+                  button.localToGlobal(Offset.zero, ancestor: overlay),
+                  button.localToGlobal(
+                    button.size.bottomRight(Offset.zero),
+                    ancestor: overlay,
+                  ),
+                ),
+                Offset.zero & overlay.size,
+              );
+
+              showMenu<String>(
+                context: context,
+                position: position,
+                items: templates.map((t) {
+                  final url = t.replaceAll('{symbol}', session.symbol!);
+                  final host = Uri.tryParse(url)?.host ?? url;
+                  return PopupMenuItem(value: url, child: Text(host));
+                }).toList(),
+              ).then((value) async {
+                if (value != null) {
+                  final uri = Uri.parse(value);
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  }
+                }
+              });
+            }
+          },
+        ),
+        IconButton(
           icon: const Icon(Icons.refresh),
           tooltip: 'Force Refresh',
           onPressed: () {
@@ -602,19 +749,21 @@ class _SessionViewState extends State<_SessionView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Stop Strategy (Configured Globally)',
-              style: TextStyle(fontWeight: FontWeight.bold),
+            Text(
+              'Active Strategy: ${provider.globalStrategyName}',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-            DropdownButton<int>(
-              value: session.selectedStrategyIndex,
-              items: const [
-                DropdownMenuItem(value: 0, child: Text('ATR Trailing Stop')),
-                DropdownMenuItem(value: 1, child: Text('EMA Stop')),
-              ],
-              onChanged: (value) {
-                if (value != null) provider.setStrategyIndex(value);
-              },
+            const SizedBox(height: 4),
+            Text(
+              provider.globalStrategyName == 'ATR'
+                  ? 'Period: ${provider.atrPeriod}, ISL: ${provider.atrMultiplier}x, Trail: ${provider.trailMultiplier}x'
+                  : 'Period: ${provider.emaPeriod}',
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              '(Configured in Global Settings)',
+              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
             ),
           ],
         ),
@@ -624,13 +773,15 @@ class _SessionViewState extends State<_SessionView> {
 
   Widget _buildResults(StockSession session) {
     if (session.isLoading) return const CircularProgressIndicator();
-    if (session.errorMessage != null)
+    if (session.errorMessage != null) {
       return Text(
         'Error: ${session.errorMessage}',
         style: const TextStyle(color: Colors.red),
       );
-    if (session.stockQuote == null)
+    }
+    if (session.stockQuote == null) {
       return const Text('Enter a symbol to start.');
+    }
 
     final lastCandle = session.stockQuote!.candles.last;
     final lastClose = lastCandle.close;
