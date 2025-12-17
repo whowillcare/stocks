@@ -169,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     context,
                     MaterialPageRoute(
                       builder: (context) => const EventLogScreen(),
+                      settings: const RouteSettings(name: '/event_log'),
                     ),
                   );
                 },

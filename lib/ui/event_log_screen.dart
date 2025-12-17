@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'home_provider.dart';
 import 'home_screen.dart'; // For SessionView
 import 'package:intl/intl.dart';
+import '../domain/model/stock_event.dart';
 
 class EventLogScreen extends StatelessWidget {
   const EventLogScreen({super.key});
@@ -27,131 +28,159 @@ class EventLogScreen extends StatelessWidget {
             return const Center(child: Text('No events logged.'));
           }
 
-          // Group by symbol
-          final grouped = <String, List<dynamic>>{};
+          // 1. Group events by symbol
+          final eventsBySymbol = <String, List<StockEvent>>{};
           for (var event in provider.eventLog) {
-            grouped.putIfAbsent(event.symbol, () => []).add(event);
+            eventsBySymbol.putIfAbsent(event.symbol, () => []).add(event);
           }
 
-          final symbols = grouped.keys.toList();
+          // 2. Identify 'Latest Date' for each symbol
+          final todaySymbols = <String>[];
+          final yesterdaySymbols = <String>[];
+          final olderSymbols = <String>[];
 
-          return ListView.builder(
-            itemCount: symbols.length,
-            itemBuilder: (context, index) {
-              final symbol = symbols[index];
-              final events = grouped[symbol]!;
-              // Sort events: newest first for display
-              events.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final yesterday = today.subtract(const Duration(days: 1));
 
-              final latest = events.first;
+          eventsBySymbol.forEach((symbol, events) {
+            // Sort events: Newest first
+            events.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-              return ExpansionTile(
-                leading: GestureDetector(
-                  onTap: () {
-                    // Find session or fallback
-                    final provider = Provider.of<HomeProvider>(
-                      context,
-                      listen: false,
-                    );
-                    final sessionIndex = provider.sessions.indexWhere(
-                      (s) => s.symbol == symbol,
-                    );
+            if (events.isEmpty) return;
 
-                    if (sessionIndex != -1) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => Scaffold(
-                            appBar: AppBar(title: Text('$symbol Session')),
-                            body: SessionView(
-                              session: provider.sessions[sessionIndex],
-                            ),
-                          ),
-                        ),
-                      );
-                    } else {
-                      // Optional: Allow viewing archived/deleted session if we stored it?
-                      // For now just show snackbar
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Active session for this symbol not found.',
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                  child: CircleAvatar(
-                    child: Text(symbol.substring(0, min(2, symbol.length))),
+            final latest = events.first.timestamp;
+            final latestDate = DateTime(latest.year, latest.month, latest.day);
+
+            if (latestDate.isAtSameMomentAs(today)) {
+              todaySymbols.add(symbol);
+            } else if (latestDate.isAtSameMomentAs(yesterday)) {
+              yesterdaySymbols.add(symbol);
+            } else {
+              olderSymbols.add(symbol);
+            }
+          });
+
+          // Helper to sort symbols within buckets by their latest event time (desc)
+          int compareSymbols(String a, String b) {
+            final dateA = eventsBySymbol[a]!.first.timestamp;
+            final dateB = eventsBySymbol[b]!.first.timestamp;
+            return dateB.compareTo(dateA);
+          }
+
+          todaySymbols.sort(compareSymbols);
+          yesterdaySymbols.sort(compareSymbols);
+          olderSymbols.sort(compareSymbols);
+
+          // 3. Build the UI List
+          final sections = <Widget>[];
+
+          Widget buildSectionHeader(String title) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            );
+          }
+
+          Widget buildSymbolTile(String symbol) {
+            final events = eventsBySymbol[symbol]!;
+            final latest = events.first;
+
+            return ExpansionTile(
+              leading: GestureDetector(
+                onTap: () => _navigateToSession(context, symbol),
+                child: CircleAvatar(
+                  child: Text(symbol.substring(0, min(2, symbol.length))),
+                ),
+              ),
+              title: GestureDetector(
+                onTap: () => _navigateToSession(context, symbol),
+                child: Text(
+                  symbol,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              subtitle: Text(
+                latest.message,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              children: events.map((event) {
+                return ListTile(
+                  dense: true,
+                  title: Text(event.message),
+                  subtitle: Text(
+                    DateFormat('yyyy-MM-dd HH:mm').format(event.timestamp),
                   ),
-                ),
-                title: GestureDetector(
-                  onTap: () {
-                    // Duplicate logic for title tap
-                    final provider = Provider.of<HomeProvider>(
-                      context,
-                      listen: false,
-                    );
-                    final sessionIndex = provider.sessions.indexWhere(
-                      (s) => s.symbol == symbol,
-                    );
-                    if (sessionIndex != -1) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => Scaffold(
-                            appBar: AppBar(title: Text('$symbol Session')),
-                            body: SessionView(
-                              session: provider.sessions[sessionIndex],
-                            ),
-                          ),
-                        ),
-                      );
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Active session for this symbol not found.',
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                  child: Text(
-                    symbol,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  leading: Icon(
+                    event.type == 'stop_loss'
+                        ? Icons.trending_up
+                        : event.type == 'warning'
+                        ? Icons.warning
+                        : Icons.info,
+                    size: 16,
+                    color: event.type == 'stop_loss'
+                        ? Colors.green
+                        : event.type == 'warning'
+                        ? Colors.orange
+                        : Colors.grey,
                   ),
-                ),
-                subtitle: Text(
-                  latest.message, // Changed from original to match instruction
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                children: events.map((event) {
-                  return ListTile(
-                    dense: true,
-                    title: Text(event.message),
-                    subtitle: Text(
-                      DateFormat('yyyy-MM-dd HH:mm').format(event.timestamp),
-                    ),
-                    leading: Icon(
-                      event.type == 'stop_loss'
-                          ? Icons.trending_up
-                          : Icons.info,
-                      size: 16,
-                      color: event.type == 'stop_loss'
-                          ? Colors.green
-                          : Colors.grey,
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          );
+                );
+              }).toList(),
+            );
+          }
+
+          if (todaySymbols.isNotEmpty) {
+            sections.add(buildSectionHeader('Today'));
+            sections.addAll(todaySymbols.map(buildSymbolTile));
+          }
+
+          if (yesterdaySymbols.isNotEmpty) {
+            sections.add(buildSectionHeader('Yesterday'));
+            sections.addAll(yesterdaySymbols.map(buildSymbolTile));
+          }
+
+          if (olderSymbols.isNotEmpty) {
+            sections.add(buildSectionHeader('Older'));
+            sections.addAll(olderSymbols.map(buildSymbolTile));
+          }
+
+          return ListView(children: sections);
         },
       ),
     );
   }
 
   int min(int a, int b) => a < b ? a : b;
+
+  void _navigateToSession(BuildContext context, String symbol) {
+    final provider = Provider.of<HomeProvider>(context, listen: false);
+    final sessionIndex = provider.sessions.indexWhere(
+      (s) => s.symbol == symbol,
+    );
+
+    if (sessionIndex != -1) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            appBar: AppBar(title: Text('$symbol Session')),
+            body: SessionView(session: provider.sessions[sessionIndex]),
+          ),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Active session for this symbol not found.'),
+        ),
+      );
+    }
+  }
 }
