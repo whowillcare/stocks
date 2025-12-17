@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
+
 import '../domain/model/search_result.dart';
 import '../domain/model/stock_data.dart' as domain; // Alias to avoid collision
 import '../domain/analysis/monitor_engine.dart';
@@ -11,6 +11,7 @@ import 'home_provider.dart';
 import 'stock_session.dart';
 import '../domain/strategy/strategy.dart'; // For calculation logic
 import 'event_log_screen.dart';
+import 'webview_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -667,16 +668,19 @@ class SessionViewState extends State<SessionView> {
             }
 
             if (templates.length == 1) {
-              final urlObj = Uri.parse(
-                templates.first.replaceAll('{symbol}', session.symbol!),
+              final urlString = templates.first.replaceAll(
+                '{symbol}',
+                session.symbol!,
               );
-              if (await canLaunchUrl(urlObj)) {
-                await launchUrl(urlObj, mode: LaunchMode.externalApplication);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Could not launch $urlObj')),
-                );
-              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => WebViewScreen(
+                    url: urlString,
+                    title: session.symbol ?? 'Stock',
+                  ),
+                ),
+              );
             } else {
               // Show menu
               final RenderBox button = context.findRenderObject() as RenderBox;
@@ -703,10 +707,16 @@ class SessionViewState extends State<SessionView> {
                 }).toList(),
               ).then((value) async {
                 if (value != null) {
-                  final uri = Uri.parse(value);
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  }
+                  if (!context.mounted) return;
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => WebViewScreen(
+                        url: value,
+                        title: session.symbol ?? 'Stock',
+                      ),
+                    ),
+                  );
                 }
               });
             }
@@ -1258,8 +1268,6 @@ class _SessionChartState extends State<SessionChart> {
     }
   }
 
-  int _volumeScaleFactor = 1;
-
   /*  Widget _buildTrackballTooltip(BuildContext context, TrackballDetails details) {
     // Get point information
     final pointInfo = details.point;
@@ -1462,7 +1470,7 @@ class _SessionChartState extends State<SessionChart> {
                     : maxVolume > 1000
                     ? 1000 // Thousands -> show in K
                     : 1; // Small volumes, no scaling
-                _volumeScaleFactor = scaleFactor;
+
                 return c.volume / scaleFactor;
               },
               name: 'Volume',
