@@ -848,26 +848,20 @@ class SessionViewState extends State<SessionView> {
               ),
             ),
             const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            Wrap(
               children: [
                 Wrap(
                   children: [
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'Cut Loss',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey,
-                          ),
-                        ),
                         IconButton(
-                          icon: const Icon(
-                            Icons.info_outline,
-                            size: 16,
-                            color: Colors.grey,
+                          icon: const Text(
+                            'Cut Loss',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey,
+                            ),
                           ),
                           tooltip:
                               'Strategy: ${provider.globalStrategyName}\n'
@@ -881,9 +875,8 @@ class SessionViewState extends State<SessionView> {
                         ),
                       ],
                     ),
-                    const SizedBox(width: 4),
                     Tooltip(
-                      message: 'Cut Loss: ${cutLossProfit.toStringAsFixed(2)}%',
+                      message: 'ICL: ${cutLossProfit.toStringAsFixed(2)}%',
                       child: Text(
                         cutLoss.toStringAsFixed(2),
                         style: const TextStyle(
@@ -898,8 +891,9 @@ class SessionViewState extends State<SessionView> {
                 if (trailing != null)
                   Wrap(
                     children: [
-                      const Text(
-                        'Trailing Profit',
+                      const SizedBox(width: 8),
+                      Text(
+                        trailingProfit > 0 ? 'Profit Out' : 'Loss Out',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.grey,
@@ -907,7 +901,7 @@ class SessionViewState extends State<SessionView> {
                       ),
                       Tooltip(
                         message:
-                            'Trailing Profit: ${trailingProfit.toStringAsFixed(2)}%',
+                            'Profit: ${trailingProfit.toStringAsFixed(2)}%',
                         child: Text(
                           trailing.toStringAsFixed(2),
                           style: TextStyle(
