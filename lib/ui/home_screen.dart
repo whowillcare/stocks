@@ -20,88 +20,115 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+enum SessionFilter { portfolio, watchlist }
+
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  // Changed from SingleTickerProviderStateMixin
   TabController? _tabController;
-  int _lastLength = 0;
+
+  SessionFilter _selectedFilter = SessionFilter.watchlist;
 
   @override
   void initState() {
     super.initState();
-    // Initialize with empty controller, will be set in didChangeDependencies
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeTabController();
     });
   }
 
+  List<StockSession> _getFilteredSessions(HomeProvider provider) {
+    if (_selectedFilter == SessionFilter.portfolio) {
+      return provider.sessions
+          .where((s) => s.entryDate != null && s.entryPrice != null)
+          .toList();
+    } else {
+      return provider.sessions
+          .where((s) => s.entryDate == null || s.entryPrice == null)
+          .toList();
+    }
+  }
+
   void _initializeTabController() {
     final provider = Provider.of<HomeProvider>(context, listen: false);
-    final length = provider.sessions.length;
+    _updateController(provider);
+  }
 
-    if (length > 0) {
+  void _updateController(HomeProvider provider) {
+    final filtered = _getFilteredSessions(provider);
+    final length = filtered.length;
+
+    int initialIndex = 0;
+    if (provider.sessions.isNotEmpty) {
+      final currentGlobal = provider.currentSession;
+      final indexInFiltered = filtered.indexOf(currentGlobal);
+      if (indexInFiltered != -1) {
+        initialIndex = indexInFiltered;
+      }
+    }
+
+    if (_tabController?.length != length) {
       _tabController?.dispose();
+      _tabController = null;
+    }
+
+    if (length > 0 && _tabController == null) {
       _tabController = TabController(
         length: length,
         vsync: this,
-        initialIndex: provider.currentSessionIndex.clamp(0, length - 1),
+        initialIndex: initialIndex.clamp(0, length - 1),
       );
-      _lastLength = length;
 
-      // Add listener to sync tab changes with provider
       _tabController!.addListener(() {
         if (!_tabController!.indexIsChanging &&
-            _tabController!.index != provider.currentSessionIndex) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              provider.setCurrentSession(_tabController!.index);
+            _tabController!.index !=
+                filtered.indexOf(provider.currentSession)) {
+          final newIndex = _tabController!.index;
+          if (newIndex >= 0 && newIndex < filtered.length) {
+            final session = filtered[newIndex];
+            final globalIndex = provider.sessions.indexOf(session);
+            if (globalIndex != -1) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  provider.setCurrentSession(globalIndex);
+                }
+              });
             }
-          });
+          }
         }
       });
+    } else if (_tabController != null && length > 0) {
+      if (_tabController!.index != initialIndex) {
+        _tabController!.animateTo(initialIndex);
+      }
+    }
 
-      setState(() {});
+    if (length == 0) {
+      _tabController?.dispose();
+      _tabController = null;
     }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
     final provider = context.watch<HomeProvider>();
-    final length = provider.sessions.length;
 
-    // Only recreate controller if length changed
-    if (length != _lastLength) {
-      if (length > 0) {
-        _tabController?.dispose();
-        _tabController = TabController(
-          length: length,
-          vsync: this,
-          initialIndex: provider.currentSessionIndex.clamp(0, length - 1),
-        );
-        _lastLength = length;
+    if (provider.sessions.isNotEmpty) {
+      final current = provider.currentSession;
+      final isPortfolio =
+          current.entryDate != null && current.entryPrice != null;
 
-        // Re-add listener after recreating controller
-        _tabController!.addListener(() {
-          if (!_tabController!.indexIsChanging &&
-              _tabController!.index != provider.currentSessionIndex) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                provider.setCurrentSession(_tabController!.index);
-              }
-            });
-          }
+      if (isPortfolio && _selectedFilter == SessionFilter.watchlist) {
+        setState(() {
+          _selectedFilter = SessionFilter.portfolio;
         });
-      } else {
-        _tabController?.dispose();
-        _tabController = null;
-        _lastLength = 0;
+      } else if (!isPortfolio && _selectedFilter == SessionFilter.portfolio) {
+        setState(() {
+          _selectedFilter = SessionFilter.watchlist;
+        });
       }
-    } else if (_tabController != null &&
-        _tabController!.index != provider.currentSessionIndex) {
-      // Just update the index if length hasn't changed
-      _tabController!.animateTo(provider.currentSessionIndex);
     }
+
+    _updateController(provider);
   }
 
   @override
@@ -114,29 +141,126 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Consumer<HomeProvider>(
       builder: (context, provider, child) {
-        // Handle empty sessions case
-        if (provider.sessions.isEmpty) {
-          return Scaffold(
-            appBar: AppBar(
-              title: const Text('Stock Analyzer'),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Refresh All',
-                  onPressed: () =>
-                      provider.refreshAllSessions(forceRefresh: true),
+        final filteredSessions = _getFilteredSessions(provider);
+
+        final actions = [
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            tooltip: 'Event Log',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const EventLogScreen(),
+                  settings: const RouteSettings(name: '/event_log'),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.settings),
-                  tooltip: 'Global Strategy Settings',
-                  onPressed: () => _showGlobalSettingsDialog(context, provider),
-                ),
-              ],
-              bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(48),
-                child: Row(
+              );
+            },
+          ),
+          if (provider.sessions.length > 1)
+            GestureDetector(
+              onTapDown: (details) {
+                _showHistoryMenu(context, details.globalPosition, provider);
+              },
+              child: const Icon(Icons.list),
+            ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Global Strategy Settings',
+            onPressed: () => showGlobalSettingsDialog(context, provider),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh All',
+            onPressed: () => provider.refreshAllSessions(forceRefresh: true),
+          ),
+        ];
+
+        final titleWidget = FittedBox(
+          child: SegmentedButton<SessionFilter>(
+            segments: const [
+              ButtonSegment(
+                value: SessionFilter.watchlist,
+                label: Text('Watchlist'),
+                icon: Icon(Icons.visibility),
+              ),
+              ButtonSegment(
+                value: SessionFilter.portfolio,
+                label: Text('Portfolio'),
+                icon: Icon(Icons.pie_chart),
+              ),
+            ],
+            selected: {_selectedFilter},
+            onSelectionChanged: (Set<SessionFilter> newSelection) {
+              setState(() {
+                _selectedFilter = newSelection.first;
+                final newFiltered = _selectedFilter == SessionFilter.portfolio
+                    ? provider.sessions
+                          .where(
+                            (s) => s.entryDate != null && s.entryPrice != null,
+                          )
+                          .toList()
+                    : provider.sessions
+                          .where(
+                            (s) => s.entryDate == null || s.entryPrice == null,
+                          )
+                          .toList();
+
+                if (newFiltered.isNotEmpty) {
+                  if (!newFiltered.contains(provider.currentSession)) {
+                    final index = provider.sessions.indexOf(newFiltered.first);
+                    provider.setCurrentSession(index);
+                  }
+                }
+              });
+            },
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+          ),
+        );
+
+        final bottomWidget = PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: Column(
+            children: [
+              if (_tabController != null)
+                Row(
                   children: [
-                    const Expanded(child: SizedBox()),
+                    Expanded(
+                      child: TabBar(
+                        controller: _tabController,
+                        onTap: (index) {
+                          if (index < filteredSessions.length) {
+                            final session = filteredSessions[index];
+                            final globalIndex = provider.sessions.indexOf(
+                              session,
+                            );
+                            if (globalIndex != -1) {
+                              provider.setCurrentSession(globalIndex);
+                            }
+                          }
+                        },
+                        isScrollable: true,
+                        tabs: filteredSessions
+                            .map(
+                              (s) => Tab(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(s.title),
+                                    const SizedBox(width: 4),
+                                    InkWell(
+                                      onTap: () => provider.removeSession(
+                                        provider.sessions.indexOf(s),
+                                      ),
+                                      child: const Icon(Icons.close, size: 16),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
                     GestureDetector(
                       onLongPressStart: (details) {
                         _showHistoryMenu(
@@ -151,106 +275,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                     ),
                   ],
+                )
+              else
+                const SizedBox(
+                  height: 48,
+                  child: Center(child: Text('No sessions')),
                 ),
-              ),
-            ),
-            body: const Center(child: Text('No sessions. Press + to add one.')),
-          );
-        }
+            ],
+          ),
+        );
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Stock Analyzer'),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.notifications),
-                tooltip: 'Event Log',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const EventLogScreen(),
-                      settings: const RouteSettings(name: '/event_log'),
-                    ),
-                  );
-                },
-              ),
-              if (provider.sessions.length > 1)
-                GestureDetector(
-                  onTapDown: (details) {
-                    _showHistoryMenu(context, details.globalPosition, provider);
-                  },
-                  child: const Icon(Icons.list),
-                ),
-              IconButton(
-                icon: const Icon(Icons.settings),
-                tooltip: 'Global Strategy Settings',
-                onPressed: () => _showGlobalSettingsDialog(context, provider),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh All',
-                onPressed: () =>
-                    provider.refreshAllSessions(forceRefresh: true),
-              ),
-            ],
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(48),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _tabController == null
-                        ? const SizedBox()
-                        : TabBar(
-                            controller: _tabController,
-                            onTap: (index) => provider.setCurrentSession(index),
-                            isScrollable: true,
-                            tabs: provider.sessions
-                                .map(
-                                  (s) => Tab(
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(s.title),
-                                        const SizedBox(width: 4),
-                                        InkWell(
-                                          onTap: () => provider.removeSession(
-                                            provider.sessions.indexOf(s),
-                                          ),
-                                          child: const Icon(
-                                            Icons.close,
-                                            size: 16,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                  ),
-                  GestureDetector(
-                    onLongPressStart: (details) {
-                      _showHistoryMenu(
-                        context,
-                        details.globalPosition,
-                        provider,
-                      );
-                    },
-                    child: IconButton(
-                      icon: const Icon(Icons.add),
-                      onPressed: () => provider.addSession(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            title: titleWidget,
+            actions: actions,
+            bottom: bottomWidget,
           ),
           body: _tabController == null
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Text(
+                    'No ${_selectedFilter == SessionFilter.portfolio ? "Portfolio" : "Watchlist"} Items',
+                  ),
+                )
               : TabBarView(
                   controller: _tabController,
-                  children: provider.sessions
+                  children: filteredSessions
                       .map((session) => SessionView(session: session))
                       .toList(),
                 ),
@@ -283,271 +332,268 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     });
   }
+}
 
-  void _showGlobalSettingsDialog(BuildContext context, HomeProvider provider) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        int tempAtrPeriod = provider.atrPeriod;
-        double tempStopMult = provider.atrMultiplier;
-        double tempTrailMult = provider.trailMultiplier;
-        int tempEmaPeriod = provider.emaPeriod;
+void showGlobalSettingsDialog(BuildContext context, HomeProvider provider) {
+  showDialog(
+    context: context,
+    builder: (context) {
+      int tempAtrPeriod = provider.atrPeriod;
+      double tempStopMult = provider.atrMultiplier;
+      double tempTrailMult = provider.trailMultiplier;
+      int tempEmaPeriod = provider.emaPeriod;
 
-        // Background config state
-        bool tempBgEnabled = provider.bgEnabled;
-        int tempBgStartHour = provider.bgStartHour;
-        int tempBgEndHour = provider.bgEndHour;
-        int tempBgFreq = provider.bgFrequencyMinutes;
-        bool tempBgExcludeWeekends = provider.bgExcludeWeekends;
+      // Background config state
+      bool tempBgEnabled = provider.bgEnabled;
+      int tempBgStartHour = provider.bgStartHour;
+      int tempBgEndHour = provider.bgEndHour;
+      int tempBgFreq = provider.bgFrequencyMinutes;
+      bool tempBgExcludeWeekends = provider.bgExcludeWeekends;
 
-        // Advanced Settings
-        String tempStrategy = provider.globalStrategyName;
-        int tempMaxHolding = provider.maxHoldingDays;
-        String tempUrlTemplates = provider.urlTemplates;
+      // Advanced Settings
+      String tempStrategy = provider.globalStrategyName;
+      int tempMaxHolding = provider.maxHoldingDays;
+      String tempUrlTemplates = provider.urlTemplates;
 
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('Global Settings'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Strategy Selection',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+      return StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Global Settings'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Strategy Selection',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempStrategy,
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'ATR',
+                        child: Text('ATR Strategy'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'EMA',
+                        child: Text('EMA Strategy'),
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => tempStrategy = v ?? 'ATR'),
+                    decoration: const InputDecoration(
+                      labelText: 'Active Strategy',
                     ),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempStrategy,
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'ATR',
-                          child: Text('ATR Strategy'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'EMA',
-                          child: Text('EMA Strategy'),
-                        ),
-                      ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  if (tempStrategy == 'ATR') ...[
+                    const Text(
+                      'ATR Parameters',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Period'),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempAtrPeriod.toString(),
+                      ),
                       onChanged: (v) =>
-                          setState(() => tempStrategy = v ?? 'ATR'),
-                      decoration: const InputDecoration(
-                        labelText: 'Active Strategy',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    if (tempStrategy == 'ATR') ...[
-                      const Text(
-                        'ATR Parameters',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                      TextField(
-                        decoration: const InputDecoration(labelText: 'Period'),
-                        keyboardType: TextInputType.number,
-                        controller: TextEditingController(
-                          text: tempAtrPeriod.toString(),
-                        ),
-                        onChanged: (v) =>
-                            tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
-                      ),
-                      TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'ISL Multiplier',
-                        ),
-                        keyboardType: TextInputType.number,
-                        controller: TextEditingController(
-                          text: tempStopMult.toString(),
-                        ),
-                        onChanged: (v) =>
-                            tempStopMult = double.tryParse(v) ?? tempStopMult,
-                      ),
-                      TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'Trailing Multiplier',
-                        ),
-                        keyboardType: TextInputType.number,
-                        controller: TextEditingController(
-                          text: tempTrailMult.toString(),
-                        ),
-                        onChanged: (v) =>
-                            tempTrailMult = double.tryParse(v) ?? tempTrailMult,
-                      ),
-                    ],
-
-                    if (tempStrategy == 'EMA') ...[
-                      const Text(
-                        'EMA Parameters',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                      TextField(
-                        decoration: const InputDecoration(labelText: 'Period'),
-                        keyboardType: TextInputType.number,
-                        controller: TextEditingController(
-                          text: tempEmaPeriod.toString(),
-                        ),
-                        onChanged: (v) =>
-                            tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
-                      ),
-                    ],
-
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Risk Management',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                          tempAtrPeriod = int.tryParse(v) ?? tempAtrPeriod,
                     ),
                     TextField(
                       decoration: const InputDecoration(
-                        labelText: 'Max Holding Days (Warning)',
+                        labelText: 'ISL Multiplier',
                       ),
                       keyboardType: TextInputType.number,
                       controller: TextEditingController(
-                        text: tempMaxHolding.toString(),
+                        text: tempStopMult.toString(),
                       ),
                       onChanged: (v) =>
-                          tempMaxHolding = int.tryParse(v) ?? tempMaxHolding,
-                    ),
-
-                    const SizedBox(height: 16),
-                    const Text(
-                      'External URLs',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                          tempStopMult = double.tryParse(v) ?? tempStopMult,
                     ),
                     TextField(
                       decoration: const InputDecoration(
-                        labelText: 'URL Templates (one per line)',
-                        hintText: 'https://site.com/{symbol}/',
+                        labelText: 'Trailing Multiplier',
                       ),
-                      keyboardType: TextInputType.multiline,
-                      maxLines: 3,
-                      controller: TextEditingController(text: tempUrlTemplates),
-                      onChanged: (v) => tempUrlTemplates = v,
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempTrailMult.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempTrailMult = double.tryParse(v) ?? tempTrailMult,
                     ),
+                  ],
 
-                    const Divider(),
+                  if (tempStrategy == 'EMA') ...[
                     const Text(
-                      'Background Service',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      'EMA Parameters',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Period'),
+                      keyboardType: TextInputType.number,
+                      controller: TextEditingController(
+                        text: tempEmaPeriod.toString(),
+                      ),
+                      onChanged: (v) =>
+                          tempEmaPeriod = int.tryParse(v) ?? tempEmaPeriod,
+                    ),
+                  ],
+
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Risk Management',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'Max Holding Days (Warning)',
+                    ),
+                    keyboardType: TextInputType.number,
+                    controller: TextEditingController(
+                      text: tempMaxHolding.toString(),
+                    ),
+                    onChanged: (v) =>
+                        tempMaxHolding = int.tryParse(v) ?? tempMaxHolding,
+                  ),
+
+                  const SizedBox(height: 16),
+                  const Text(
+                    'External URLs',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'URL Templates (one per line)',
+                      hintText: 'https://site.com/{symbol}/',
+                    ),
+                    keyboardType: TextInputType.multiline,
+                    maxLines: 3,
+                    controller: TextEditingController(text: tempUrlTemplates),
+                    onChanged: (v) => tempUrlTemplates = v,
+                  ),
+
+                  const Divider(),
+                  const Text(
+                    'Background Service',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  SwitchListTile(
+                    title: const Text('Enable Background Checks'),
+                    value: tempBgEnabled,
+                    onChanged: (val) => setState(() => tempBgEnabled = val),
+                  ),
+                  if (tempBgEnabled) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Start Hour (0-23)',
+                            ),
+                            keyboardType: TextInputType.number,
+                            controller: TextEditingController(
+                              text: tempBgStartHour.toString(),
+                            ),
+                            onChanged: (v) => tempBgStartHour =
+                                int.tryParse(v) ?? tempBgStartHour,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'End Hour (0-23)',
+                            ),
+                            keyboardType: TextInputType.number,
+                            controller: TextEditingController(
+                              text: tempBgEndHour.toString(),
+                            ),
+                            onChanged: (v) => tempBgEndHour =
+                                int.tryParse(v) ?? tempBgEndHour,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<int>(
+                      decoration: const InputDecoration(labelText: 'Frequency'),
+                      initialValue: tempBgFreq,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 15,
+                          child: Text('Every 15 mins'),
+                        ),
+                        DropdownMenuItem(
+                          value: 60,
+                          child: Text('Every 1 hour'),
+                        ),
+                        DropdownMenuItem(
+                          value: 120,
+                          child: Text('Every 2 hours'),
+                        ),
+                        DropdownMenuItem(
+                          value: 360,
+                          child: Text('Every 6 hours'),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() => tempBgFreq = v ?? 60),
                     ),
                     SwitchListTile(
-                      title: const Text('Enable Background Checks'),
-                      value: tempBgEnabled,
-                      onChanged: (val) => setState(() => tempBgEnabled = val),
+                      title: const Text('Exclude Weekends'),
+                      value: tempBgExcludeWeekends,
+                      onChanged: (val) =>
+                          setState(() => tempBgExcludeWeekends = val),
                     ),
-                    if (tempBgEnabled) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                labelText: 'Start Hour (0-23)',
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(
-                                text: tempBgStartHour.toString(),
-                              ),
-                              onChanged: (v) => tempBgStartHour =
-                                  int.tryParse(v) ?? tempBgStartHour,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                labelText: 'End Hour (0-23)',
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(
-                                text: tempBgEndHour.toString(),
-                              ),
-                              onChanged: (v) => tempBgEndHour =
-                                  int.tryParse(v) ?? tempBgEndHour,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<int>(
-                        decoration: const InputDecoration(
-                          labelText: 'Frequency',
-                        ),
-                        initialValue: tempBgFreq,
-                        items: const [
-                          DropdownMenuItem(
-                            value: 15,
-                            child: Text('Every 15 mins'),
-                          ),
-                          DropdownMenuItem(
-                            value: 60,
-                            child: Text('Every 1 hour'),
-                          ),
-                          DropdownMenuItem(
-                            value: 120,
-                            child: Text('Every 2 hours'),
-                          ),
-                          DropdownMenuItem(
-                            value: 360,
-                            child: Text('Every 6 hours'),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() => tempBgFreq = v ?? 60),
-                      ),
-                      SwitchListTile(
-                        title: const Text('Exclude Weekends'),
-                        value: tempBgExcludeWeekends,
-                        onChanged: (val) =>
-                            setState(() => tempBgExcludeWeekends = val),
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    provider.updateGlobalAtrParams(
-                      period: tempAtrPeriod,
-                      multiplier: tempStopMult,
-                      trailMultiplier: tempTrailMult,
-                    );
-                    provider.updateGlobalEmaParams(period: tempEmaPeriod);
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  provider.updateGlobalAtrParams(
+                    period: tempAtrPeriod,
+                    multiplier: tempStopMult,
+                    trailMultiplier: tempTrailMult,
+                  );
+                  provider.updateGlobalEmaParams(period: tempEmaPeriod);
 
-                    provider.updateBackgroundSettings(
-                      enabled: tempBgEnabled,
-                      startHour: tempBgStartHour,
-                      endHour: tempBgEndHour,
-                      frequencyMinutes: tempBgFreq,
-                      excludeWeekends: tempBgExcludeWeekends,
-                    );
+                  provider.updateBackgroundSettings(
+                    enabled: tempBgEnabled,
+                    startHour: tempBgStartHour,
+                    endHour: tempBgEndHour,
+                    frequencyMinutes: tempBgFreq,
+                    excludeWeekends: tempBgExcludeWeekends,
+                  );
 
-                    provider.updateAdvancedSettings(
-                      strategyName: tempStrategy,
-                      holdingDays: tempMaxHolding,
-                      templates: tempUrlTemplates,
-                    );
+                  provider.updateAdvancedSettings(
+                    strategyName: tempStrategy,
+                    holdingDays: tempMaxHolding,
+                    templates: tempUrlTemplates,
+                  );
 
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+                  Navigator.pop(context);
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
 }
 
 class SessionView extends StatefulWidget {
@@ -584,11 +630,9 @@ class SessionViewState extends State<SessionView> {
               children: [
                 _buildSearchSection(context, provider, session),
                 const SizedBox(height: 16),
-                _buildStrategyConfig(context, provider, session),
-                const SizedBox(height: 16),
                 _buildEntryConfig(context, provider, session),
                 const SizedBox(height: 16),
-                _buildResults(session),
+                _buildResults(context, provider, session),
                 const SizedBox(height: 16),
               ],
             ),
@@ -749,40 +793,11 @@ class SessionViewState extends State<SessionView> {
     );
   }
 
-  Widget _buildStrategyConfig(
+  Widget _buildResults(
     BuildContext context,
     HomeProvider provider,
     StockSession session,
   ) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Active Strategy: ${provider.globalStrategyName}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              provider.globalStrategyName == 'ATR'
-                  ? 'Period: ${provider.atrPeriod}, ISL: ${provider.atrMultiplier}x, Trail: ${provider.trailMultiplier}x'
-                  : 'Period: ${provider.emaPeriod}',
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              '(Configured in Global Settings)',
-              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildResults(StockSession session) {
     if (session.isLoading) return const CircularProgressIndicator();
     if (session.errorMessage != null) {
       return Text(
@@ -838,13 +853,35 @@ class SessionViewState extends State<SessionView> {
               children: [
                 Wrap(
                   children: [
-                    const Text(
-                      'Cut Loss',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Cut Loss',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.info_outline,
+                            size: 16,
+                            color: Colors.grey,
+                          ),
+                          tooltip:
+                              'Strategy: ${provider.globalStrategyName}\n'
+                              '${provider.globalStrategyName == 'ATR' ? 'Period: ${provider.atrPeriod}, ISL: ${provider.atrMultiplier}x' : 'Period: ${provider.emaPeriod}'}\n'
+                              'Click to Configure',
+                          onPressed: () =>
+                              showGlobalSettingsDialog(context, provider),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
                     ),
+                    const SizedBox(width: 4),
                     Tooltip(
                       message: 'Cut Loss: ${cutLossProfit.toStringAsFixed(2)}%',
                       child: Text(
