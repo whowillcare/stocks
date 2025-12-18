@@ -111,9 +111,12 @@ class AtrStopStrategy implements StopStrategy {
     double highestCloseSinceEntry = priceNow;
     String highestCloseDesc = 'Current Close';
     if (hasEntry && entryIndex >= 0) {
+      highestCloseSinceEntry = 0.0;
       for (int i = entryIndex; i <= last; i++) {
-        highestCloseSinceEntry = max(highestCloseSinceEntry, closes[i]);
-        highestCloseDesc = '@[${candles[i].dateStr}]';
+        if (closes[i] >= highestCloseSinceEntry) {
+          highestCloseSinceEntry = closes[i];
+          highestCloseDesc = '@[${candles[i].dateStr}]';
+        }
       }
     } else {
       // Use rolling 60-day highest
